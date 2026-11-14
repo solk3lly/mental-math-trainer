@@ -5,7 +5,7 @@ import HotkeyHint from 'components/HotkeyHint.js';
 import EndRoundDialog from 'components/EndRoundDialog.js';
 import IconLabel from 'components/IconLabel.js';
 import PageIntro from 'components/PageIntro.js';
-import RoundSummaryPanel from 'components/RoundSummaryPanel.js';
+import RoundSummaryPanel, { getSaveStatusMessage } from 'components/RoundSummaryPanel.js';
 import Keypad from 'components/mixed/Keypad.js';
 import ProgressBar from 'components/mixed/ProgressBar.js';
 import QuestionTimer from 'components/mixed/QuestionTimer.js';
@@ -41,7 +41,7 @@ import {
   formatHotkeyLabel,
   isShortcutEventEligible
 } from 'utils/hotkeys.js';
-import { assertProgressRoundCurrent } from 'utils/progressWriteCoordinator.js';
+import { saveAccountRound, STALE_PROGRESS_WRITE } from 'utils/progressWriteCoordinator.js';
 import useAccountProgressRound from 'utils/useAccountProgressRound.js';
 import { getSupabaseRestConfig } from 'utils/supabaseClient.js';
 import { finishGuestSession, recordGuestAttempt, startGuestSession, touchGuestSession } from 'utils/progressStorage.js';
@@ -74,52 +74,20 @@ function getPathnameFromUrl(url) {
   }
 }
 
-function createRoundSummary(attempts, settings, userId, wasTerminated, sessionId) {
+function createRoundSummary(attempts, settings, userId, wasTerminated, round) {
   return {
     ...computeRoundStats(attempts),
     attempts,
     settings,
-    sessionId,
+    sessionId: round?.sessionId ?? null,
+    resetGeneration: round?.resetGeneration,
+    saveGeneration: round?.writeGeneration,
     ownerId: userId || null,
     finishedAt: new Date().toISOString(),
     wasTerminated,
     saveState: 'saving',
     saveError: ''
   };
-}
-
-function getSaveStatusMessage(lastRound) {
-  if (lastRound.saveState === 'saving') {
-    return lastRound.wasTerminated
-      ? 'Ending session and saving progress...'
-      : 'Saving this round...';
-  }
-
-  if (lastRound.saveState === 'saved') {
-    return lastRound.wasTerminated
-      ? 'Session ended early and progress was saved to your history.'
-      : 'Round saved to your progress history.';
-  }
-
-  if (lastRound.saveState === 'device-saved') {
-    return lastRound.wasTerminated
-      ? 'Ended early. Submitted answers were saved on this device.'
-      : 'Round saved on this device.';
-  }
-
-  if (lastRound.saveState === 'idle') {
-    return lastRound.wasTerminated
-      ? 'Session ended early. Sign in to store partial progress.'
-      : 'Sign in to store completed rounds.';
-  }
-
-  if (lastRound.saveState === 'error') {
-    return lastRound.wasTerminated
-      ? `Could not save this ended session: ${lastRound.saveError}`
-      : `Could not save this round: ${lastRound.saveError}`;
-  }
-
-  return '';
 }
 
 const DIFFICULTY_LABELS = {
@@ -308,7 +276,7 @@ function MixedTrainerContent() {
       summary?.sessionId === sessionId
         ? {
             ...summary,
-            saveState: 'error',
+            saveState: error?.code === STALE_PROGRESS_WRITE ? 'discarded' : 'error',
             saveError: error?.message || fallbackMessage
           }
         : summary
@@ -337,7 +305,7 @@ function MixedTrainerContent() {
       setAnswerInput('');
       setSubmissionFeedbackState(MIXED_SUBMISSION_FEEDBACK_STATES.IDLE);
 
-      const summary = createRoundSummary(attempts, finishingRound?.settings, userId, wasTerminated, finishingSessionId);
+      const summary = createRoundSummary(attempts, finishingRound?.settings, userId, wasTerminated, finishingRound);
       if (isMountedRef.current) {
         setLastRound(summary);
       }
@@ -360,8 +328,9 @@ function MixedTrainerContent() {
       }
 
       try {
-        assertProgressRoundCurrent(finishingRound, userId);
-        await persistQueuedProgress({ keepalive });
+        await saveAccountRound(clientRef.current, summary, {
+          table: 'progress_logs', flush: persistQueuedProgress, keepalive
+        });
         markSummarySaved(finishingSessionId);
         return { saved: true, error: null };
       } catch (error) {
@@ -574,7 +543,9 @@ function MixedTrainerContent() {
       ? { ...current, saveState: 'saving', saveError: '' } : current);
     try {
       if (summary.ownerId) {
-        await persistQueuedProgress();
+        await saveAccountRound(clientRef.current, summary, {
+          table: 'progress_logs', flush: persistQueuedProgress
+        });
         markSummarySaved(summary.sessionId);
       } else {
         await startGuestSession({

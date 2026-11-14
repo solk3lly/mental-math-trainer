@@ -4,6 +4,22 @@ import SlidersHorizontalIcon from 'images/phosphor/sliders-horizontal.svg';
 import TrophyIcon from 'images/phosphor/trophy.svg';
 import { formatDuration } from 'utils/mathEngine.js';
 
+const SAVE_MESSAGES = {
+  saving: ['Saving this round...', 'Ending session and saving progress...'],
+  saved: ['Round saved to your progress history.', 'Session ended early and progress was saved to your history.'],
+  'device-saved': ['Round saved on this device.', 'Ended early. Submitted answers were saved on this device.'],
+  idle: ['Sign in to store completed rounds.', 'Session ended early. Sign in to store partial progress.'],
+  discarded: ['Account progress was reset. This round was not saved.', 'Account progress was reset. This round was not saved.']
+};
+
+export function getSaveStatusMessage({ saveState, saveError, wasTerminated }) {
+  if (saveState === 'error') {
+    const label = wasTerminated ? 'this ended session' : 'this round';
+    return `Could not save ${label}: ${saveError}`;
+  }
+  return SAVE_MESSAGES[saveState]?.[Number(Boolean(wasTerminated))] ?? '';
+}
+
 function RoundCompletionNote({ round }) {
   if (!round.wasTerminated) return null;
   return <>

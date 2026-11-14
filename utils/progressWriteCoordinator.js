@@ -88,8 +88,36 @@ export function resetAccountProgress(userId, work, afterReset) {
 
 export function assertProgressRoundCurrent(round, userId) {
   if (!isProgressRowCurrent({ user_id: userId, reset_generation: round.resetGeneration }, round.writeGeneration)) {
-    throw new Error('Account progress was reset during this round. Start a new round.');
+    throw Object.assign(new Error('Account progress was reset during this round. Start a new round.'),
+      { code: STALE_PROGRESS_WRITE });
   }
+}
+
+export async function saveAccountRound(client, summary, { table, flush, keepalive = false }) {
+  const { ownerId, resetGeneration, saveGeneration } = summary;
+  const round = { resetGeneration, writeGeneration: saveGeneration };
+  const assertCurrent = () => assertProgressRoundCurrent(round, ownerId);
+  assertCurrent();
+  await flush({ keepalive }).catch(async error => {
+    if (error?.code !== STALE_PROGRESS_WRITE) throw error;
+    await getAccountProgressGeneration(client, ownerId);
+    assertCurrent();
+  });
+  const count = await countSavedAnswers(client, table, summary);
+  assertCurrent();
+  if (count === summary.total) return;
+  await getAccountProgressGeneration(client, ownerId);
+  assertCurrent();
+  throw new Error('Some answers have not synced. Retry saving this round or check Progress.');
+}
+
+async function countSavedAnswers(client, table, { ownerId, resetGeneration, sessionId, total }) {
+  const { count, error } = await client.from(table)
+    .select('question_index', { count: 'exact', head: true })
+    .eq('user_id', ownerId).eq('session_id', sessionId)
+    .eq('reset_generation', resetGeneration).lte('question_index', total);
+  if (error) throw error;
+  return count;
 }
 
 function rememberServerGeneration(userId, generation) {

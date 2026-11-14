@@ -6,15 +6,14 @@ const { loadPage } = require('./helpers/renderPage.cjs');
 
 async function renderShell(t, user = null) {
   const dependencies = {};
-  for (const name of ['hotkeys', 'displayMode', 'interfaceStyle', 'themes']) dependencies[`utils/${name}.js`] = await import(`../utils/${name}.js`);
+  for (const name of ['hotkeys', 'displayMode', 'themes']) dependencies[`utils/${name}.js`] = await import(`../utils/${name}.js`);
   const router = { pathname: '/', events: { on() {}, off() {} }, push: async () => {} };
   const calls = { exits: 0, signOuts: 0 };
   const session = { hasActiveSession: false, requestActiveSessionExit: async () => { calls.exits++; return false; } };
   dependencies['next/router'] = { useRouter: () => router };
   dependencies['next/link'] = { __esModule: true, default: props => React.createElement('a', props, props.children) };
-  dependencies['components/InterfaceArtwork.js'] = { INTERFACE_ARTWORK: {} };
   dependencies['utils/supabaseAuthContext.js'] = { useSupabaseAuth: () => ({ user, isConfigured: true, signOut: async () => { calls.signOuts++; return { error: null }; } }) };
-  dependencies['utils/accountPreferencesContext.js'] = { useAccountPreferences: () => ({ themeKey: 'carbon-paper', displayMode: 'light', interfaceStyle: 'studio', isLoadingPreferences: false, upsertPreferences: async () => ({ error: null }) }) };
+  dependencies['utils/accountPreferencesContext.js'] = { useAccountPreferences: () => ({ themeKey: 'carbon-paper', displayMode: 'light', isLoadingPreferences: false, upsertPreferences: async () => ({ error: null }) }) };
   dependencies['utils/activeSessionContext.js'] = { useActiveSession: () => session };
   dependencies['utils/useResolvedDisplayMode.js'] = { useResolvedDisplayMode: () => 'light' };
   dependencies['utils/useLetterShortcuts.js'] = await import('../utils/useLetterShortcuts.js');

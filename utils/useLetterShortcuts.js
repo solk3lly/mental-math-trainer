@@ -8,7 +8,7 @@ export function useLetterShortcuts() {
   }, []);
   const changeEnabled = (value) => {
     setEnabled(value);
-    writeStorageJson('mathtrainer:letter-shortcuts', value);
+    return writeStorageJson('mathtrainer:letter-shortcuts', value);
   };
   return [enabled, changeEnabled];
 }

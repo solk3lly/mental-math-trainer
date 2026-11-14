@@ -8,10 +8,6 @@ import {
 } from 'utils/displayMode.js';
 import { HOTKEY_REFERENCE_GROUPS, formatHotkeyLabel } from 'utils/hotkeys.js';
 import {
-  DEFAULT_INTERFACE_STYLE,
-  INTERFACE_STYLE_OPTIONS
-} from 'utils/interfaceStyle.js';
-import {
   DEFAULT_THEME_KEY,
   THEME_COLLECTION_OPTIONS,
   THEME_OPTIONS
@@ -61,14 +57,12 @@ export default function CommandDesk({
   activeTheme,
   closeButtonRef,
   displayMode,
-  interfaceStyle,
   drawerRef,
   isLoadingPreferences,
   letterShortcutsEnabled,
   onLetterShortcutsChange,
   onClose,
   onDisplayModeChange,
-  onInterfaceStyleChange,
   onResetAppearance,
   onThemeChange
 }) {
@@ -179,24 +173,14 @@ export default function CommandDesk({
     setStatusMessage(preferenceStatus(await onDisplayModeChange(nextDisplayMode), 'Display mode saved.'));
   };
 
-  const handleInterfaceStyleSelection = async (nextInterfaceStyle) => {
-    const { error } = await onInterfaceStyleChange(nextInterfaceStyle);
-    setStatusMessage(
-      error
-        ? 'Interface changed for now, but could not be saved. Try again.'
-        : 'Interface saved.'
-    );
-  };
-
   const handleResetAppearance = async () => {
-    setStatusMessage(preferenceStatus(await onResetAppearance(), 'Appearance reset to Studio, Carbon Paper, and Adaptive mode.'));
+    setStatusMessage(preferenceStatus(await onResetAppearance(), 'Appearance reset to Carbon Paper and Adaptive mode.'));
     themeSummaryButtonRef.current?.focus();
   };
 
   const isAppearanceDefault =
     activeTheme.key === DEFAULT_THEME_KEY &&
-    displayMode === DEFAULT_DISPLAY_MODE &&
-    interfaceStyle === DEFAULT_INTERFACE_STYLE;
+    displayMode === DEFAULT_DISPLAY_MODE;
 
   return (
     <section
@@ -347,24 +331,6 @@ export default function CommandDesk({
             <div className='utility-section-head'>
               <p className='theme-kicker'>Appearance</p>
             </div>
-            <div className='interface-style-field'>
-              <span className='theme-label' id='interface-style-label'>Interface</span>
-              <div className='interface-style-options' role='group' aria-labelledby='interface-style-label'>
-                {INTERFACE_STYLE_OPTIONS.map((option) => (
-                  <button
-                    key={option.value}
-                    type='button'
-                    className={`interface-style-button ${interfaceStyle === option.value ? 'is-active' : ''}`.trim()}
-                    aria-pressed={interfaceStyle === option.value}
-                    disabled={isLoadingPreferences}
-                    onClick={() => handleInterfaceStyleSelection(option.value)}
-                  >
-                    <span className='interface-option-name'>{option.label}</span>
-                  </button>
-                ))}
-              </div>
-              <p className='interface-style-hint'>Your selected color theme works in every interface.</p>
-            </div>
             <fieldset
               className='display-mode-fieldset'
               disabled={isLoadingPreferences}
@@ -446,7 +412,10 @@ export default function CommandDesk({
               </span>
             </button>
 
-            <LetterShortcutSettings enabled={letterShortcutsEnabled} onChange={onLetterShortcutsChange} />
+            <LetterShortcutSettings enabled={letterShortcutsEnabled} onChange={enabled => {
+              const saved = onLetterShortcutsChange(enabled);
+              setStatusMessage(saved ? '' : 'Shortcuts changed for now. This browser could not save the setting.');
+            }} />
             {isShortcutsExpanded && (
               <div id='command-desk-shortcuts' className='hotkey-reference'>
                 {HOTKEY_REFERENCE_GROUPS.map((group) => (

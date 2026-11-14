@@ -1,107 +1,86 @@
 import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import PageIntro from 'components/PageIntro.js';
+import { clearSignupVerification, getSignupVerification } from 'utils/supabaseClient.js';
 import { useSupabaseAuth } from 'utils/supabaseAuthContext.js';
 
 const REDIRECT_DELAY_MS = 2000;
+const TITLES = {
+  checking: 'Checking your link',
+  confirmed: 'Email confirmed',
+  invalid: 'Confirmation link could not be verified',
+  signedIn: 'Already signed in',
+  'no-link': 'Confirm your email'
+};
+const MESSAGES = {
+  checking: 'Checking the email confirmation link.',
+  confirmed: 'Your email was confirmed. Opening the trainer…',
+  invalid: 'The link may be invalid or expired. Log in if you already confirmed your email, or request a new link.',
+  signedIn: 'You already have an active session in this browser.',
+  'no-link': 'Open the link sent to your email to confirm your account.'
+};
+
+function getVerificationView(isLoading, verification, user) {
+  if (isLoading || !verification) return 'checking';
+  if (verification.status === 'invalid') return 'invalid';
+  if (verification.status === 'confirmed' && verification.userId === user?.id) return 'confirmed';
+  return user ? 'signedIn' : 'no-link';
+}
 
 export default function VerifyPage() {
   const router = useRouter();
   const { isLoading, user } = useSupabaseAuth();
+  const [verification, setVerification] = useState(null);
+  const view = getVerificationView(isLoading, verification, user);
 
   useEffect(() => {
-    if (isLoading || !user) {
-      return undefined;
-    }
+    let active = true;
+    void getSignupVerification().then(result => {
+      if (!active) return;
+      clearSignupVerification();
+      setVerification(result);
+    });
+    return () => { active = false; };
+  }, []);
 
-    const timeoutId = window.setTimeout(() => {
-      void router.replace('/');
-    }, REDIRECT_DELAY_MS);
-
+  useEffect(() => {
+    if (view !== 'confirmed') return undefined;
+    const timeoutId = window.setTimeout(() => void router.replace('/'), REDIRECT_DELAY_MS);
     return () => window.clearTimeout(timeoutId);
-  }, [isLoading, router, user]);
-
-  const redirectSeconds = REDIRECT_DELAY_MS / 1000;
+  }, [router, view]);
 
   return (
     <>
-      <Head>
-        <title>Verify Email | Mental Math Studio</title>
-        <meta
-          name='description'
-          content='Confirm your email for Mental Math Studio and continue into your training account.'
-        />
-      </Head>
-
+      <Head><title>Verify Email | Mental Math Studio</title></Head>
       <div className='verify-shell'>
-        <PageIntro title={isLoading ? 'Checking your link' : user ? 'Email confirmed' : 'Confirm your email'} />
-
+        <PageIntro title={TITLES[view]} />
         <section className='panel paper-panel auth-panel verify-panel appear-up'>
-          <p className='panel-kicker'>Current status</p>
-          <div
-            className={`verify-status${
-              isLoading ? ' is-pending' : user ? ' is-success' : ' is-idle'
-            }`}
-            aria-live='polite'
-          >
-            {isLoading ? (
-              <>
-                <p className='verify-status-copy'>
-                  Checking your verification link and restoring your session if it is available.
-                </p>
-                <p className='verify-status-note'>This usually takes a moment.</p>
-              </>
-            ) : user ? (
-              <>
-                <p className='verify-status-copy'>You are verified and already signed in.</p>
-                {user.email && <p className='verify-user-pill'>{user.email}</p>}
-                <p className='verify-status-note'>
-                  Redirecting to the trainer in {redirectSeconds} seconds.
-                </p>
-              </>
-            ) : (
-              <>
-                <p className='verify-status-copy'>No verified session is active yet.</p>
-                <p className='verify-status-note'>
-                  Use the email link to return here. If you already confirmed your account, you can log in now.
-                </p>
-              </>
+          <div className={`verify-status ${view === 'confirmed' ? 'is-success' : 'is-idle'}`} role='status'>
+            <p className='verify-status-copy'>{MESSAGES[view]}</p>
+            {(view === 'confirmed' || view === 'signedIn') && user.email && (
+              <p className='verify-user-pill'>{user.email}</p>
             )}
           </div>
-
-          {user ? (
-            <>
-              <div className='inline-actions verify-actions'>
-                <Link href='/' className='button button-strong'>
-                  Enter trainer
-                </Link>
-                <Link href='/stats' className='button button-quiet'>
-                  View progress
-                </Link>
-              </div>
-              <p className='auth-helper verify-helper'>
-                Prefer not to wait? Open the trainer now.
-              </p>
-            </>
-          ) : !isLoading ? (
-            <>
-              <div className='inline-actions verify-actions'>
-                <Link href='/login' className='button button-strong'>
-                  Log in
-                </Link>
-                <Link href='/signup' className='button button-quiet'>
-                  Create account
-                </Link>
-              </div>
-              <p className='auth-helper verify-helper'>
-                The confirmation link always returns to this page first.
-              </p>
-            </>
-          ) : null}
+          {view !== 'checking' && <VerificationActions user={user} />}
         </section>
       </div>
     </>
+  );
+}
+
+function VerificationActions({ user }) {
+  return (
+    <div className='inline-actions verify-actions'>
+      {user ? (
+        <Link href='/' className='button button-strong'>Open trainer</Link>
+      ) : (
+        <Link href='/login' className='button button-strong'>Log in</Link>
+      )}
+      <Link href={user ? '/stats' : '/signup'} className='button button-quiet'>
+        {user ? 'View progress' : 'Create account'}
+      </Link>
+    </div>
   );
 }

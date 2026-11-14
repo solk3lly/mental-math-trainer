@@ -34,7 +34,7 @@ export default function StatsPage() {
 
 function StatsContent({ auth }) {
   const { user, isConfigured, isLoading: isCheckingAccount } = auth;
-  const { dashboardData, isLoading, isResetting, errorMessage, syncError, importOffer,
+  const { dashboardData, isLoading, isResetting, errorMessage, syncError, rejectedCount, importOffer,
     isImporting, importDismissed, setImportDismissed, loadLogs, handleClearGuestHistory,
     handleImport, handleReset } = useProgressDashboard(auth);
   const { overview, operationBreakdown, recentSessions, recentAttempts } = dashboardData;
@@ -70,7 +70,7 @@ function StatsContent({ auth }) {
           <section className='stats-actions appear-up'>
             <button
               type='button'
-              onClick={loadLogs}
+              onClick={() => void loadLogs()}
               className='button button-quiet'
               disabled={isLoading || isResetting || isImporting}
             >
@@ -89,6 +89,14 @@ function StatsContent({ auth }) {
           </section>
 
           {syncError && <p className='feedback warning' role='status'>{syncError}</p>}
+          {rejectedCount > 0 && (
+            <div className='feedback warning'>
+              <p role='status'>{rejectedCount} {rejectedCount === 1 ? 'answer was' : 'answers were'} rejected by account sync and kept on this device.</p>
+              <button type='button' className='button button-quiet'
+                disabled={isLoading || isResetting || isImporting}
+                onClick={() => void loadLogs({ retryRejected: true })}>Retry rejected answers</button>
+            </div>
+          )}
 
           {!user && !isLoading && !errorMessage && (
             <p className='save-status'>Saved on this device · Last {DEVICE_HISTORY_DAYS} days, up to 100 sessions or 10,000 attempts. Clearing browser data removes this history. {isConfigured && <Link href='/login' className='text-link'>Log in to sync it</Link>}</p>
@@ -198,7 +206,7 @@ function StatsContent({ auth }) {
                 <p className='section-intro'>
                   Showing sessions from the last {RECENT_PROGRESS_WINDOW_DAYS} days.
                 </p>
-                <div className='table-wrap'>
+                <div className='table-wrap' role='region' aria-label='Recent training sessions' tabIndex={0}>
                   <table>
                     <thead>
                       <tr>

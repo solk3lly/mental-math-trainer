@@ -1,4 +1,5 @@
 const guestSessionLocks = new Map();
+const localGuestSessions = new Set();
 const GUEST_LOCK_PREFIX = 'mental-math-guest:';
 
 function getLocks() {
@@ -7,7 +8,11 @@ function getLocks() {
 
 export async function holdGuestSession(sessionId) {
   const locks = getLocks();
-  if (!locks?.request || guestSessionLocks.has(sessionId)) return;
+  if (!locks?.request) {
+    localGuestSessions.add(sessionId);
+    return;
+  }
+  if (guestSessionLocks.has(sessionId)) return;
   let release;
   const held = new Promise(resolve => { release = resolve; });
   const acquired = new Promise((resolve, reject) => {
@@ -25,15 +30,17 @@ export async function holdGuestSession(sessionId) {
 }
 
 export function releaseGuestSession(sessionId) {
+  localGuestSessions.delete(sessionId);
   guestSessionLocks.get(sessionId)?.();
   guestSessionLocks.delete(sessionId);
 }
 
 export async function liveGuestSessions() {
   const snapshot = await getLocks()?.query?.();
-  return new Set((snapshot?.held || []).map(lock => lock.name)
+  const held = (snapshot?.held || []).map(lock => lock.name)
     .filter(name => name.startsWith(GUEST_LOCK_PREFIX))
-    .map(name => name.slice(GUEST_LOCK_PREFIX.length)));
+    .map(name => name.slice(GUEST_LOCK_PREFIX.length));
+  return new Set([...localGuestSessions, ...guestSessionLocks.keys(), ...held]);
 }
 
 

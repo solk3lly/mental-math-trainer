@@ -2,7 +2,6 @@ import { PRACTICE_MODES, sanitizeSettings } from './mathEngine.js';
 import { DEFAULT_THEME_KEY, resolveThemeKey } from './themes.js';
 import { readStorageJson, writeStorageJson } from './browserStorage.js';
 import { DEFAULT_DISPLAY_MODE, sanitizeDisplayMode } from './displayMode.js';
-import { DEFAULT_INTERFACE_STYLE, sanitizeInterfaceStyle } from './interfaceStyle.js';
 
 export const USER_PREFERENCES_TABLE = 'user_preferences';
 export const GUEST_ACCOUNT_PREFERENCES_STORAGE_KEY =
@@ -14,7 +13,6 @@ export const USER_PREFERENCES_COLUMNS = [
   'user_id',
   'theme_key',
   'display_mode',
-  'interface_style',
   'trainer_practice_mode',
   'trainer_operation',
   'trainer_left_digits',
@@ -46,7 +44,6 @@ export function createDefaultAccountPreferences() {
   return {
     themeKey: DEFAULT_THEME_KEY,
     displayMode: DEFAULT_DISPLAY_MODE,
-    interfaceStyle: DEFAULT_INTERFACE_STYLE,
     trainerSettings: createDefaultTrainerSettings()
   };
 }
@@ -96,7 +93,6 @@ export function sanitizeAccountPreferences(input = {}) {
   return {
     themeKey: sanitizeThemeKey(input.themeKey ?? input.theme_key),
     displayMode: sanitizeDisplayMode(input.displayMode ?? input.display_mode),
-    interfaceStyle: sanitizeInterfaceStyle(input.interfaceStyle ?? input.interface_style),
     trainerSettings: sanitizeTrainerSettings(input.trainerSettings ?? input)
   };
 }
@@ -113,7 +109,6 @@ export function mergeAccountPreferences(currentPreferences, patch = {}) {
   return sanitizeAccountPreferences({
     themeKey: patch.themeKey ?? current.themeKey,
     displayMode: patch.displayMode ?? current.displayMode,
-    interfaceStyle: patch.interfaceStyle ?? current.interfaceStyle,
     trainerSettings: nextTrainerSettings
   });
 }
@@ -128,7 +123,6 @@ export function buildUserPreferencesRow(
     user_id: userId,
     theme_key: sanitized.themeKey,
     display_mode: sanitized.displayMode,
-    interface_style: sanitized.interfaceStyle,
     trainer_practice_mode: sanitized.trainerSettings.practiceMode,
     trainer_operation: sanitized.trainerSettings.operation,
     trainer_left_digits: sanitized.trainerSettings.leftDigits,

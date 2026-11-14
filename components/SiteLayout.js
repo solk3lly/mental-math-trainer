@@ -3,7 +3,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import CommandDesk from 'components/CommandDesk.js';
-import { INTERFACE_ARTWORK } from 'components/InterfaceArtwork.js';
 import IconLabel from 'components/IconLabel.js';
 import ChartLineUpIcon from 'images/phosphor/chart-line-up.svg';
 import CommandIcon from 'images/phosphor/command-bold.svg';
@@ -22,7 +21,6 @@ import {
 } from 'utils/hotkeys.js';
 import { useSupabaseAuth } from 'utils/supabaseAuthContext.js';
 import { DEFAULT_DISPLAY_MODE } from 'utils/displayMode.js';
-import { DEFAULT_INTERFACE_STYLE, INTERFACE_STYLE_OPTIONS } from 'utils/interfaceStyle.js';
 import {
   DEFAULT_THEME_KEY,
   getThemeByKey,
@@ -36,9 +34,11 @@ export default function SiteLayout({ children }) {
   const router = useRouter();
   const { user, isConfigured, signOut } = useSupabaseAuth();
   const { requestActiveSessionExit, hasActiveSession } = useActiveSession();
-  const { themeKey, displayMode, interfaceStyle, isLoadingPreferences, upsertPreferences } =
+  const { themeKey, displayMode, isLoadingPreferences, upsertPreferences } =
     useAccountPreferences();
   const [isUtilityDrawerOpen, setIsUtilityDrawerOpen] = useState(false);
+  const [signOutFailure, setSignOutFailure] = useState(null);
+  const signingOutRef = useRef(false);
   const [letterShortcutsEnabled, changeLetterShortcuts] = useLetterShortcuts();
   const utilityButtonRef = useRef(null);
   const utilityCloseButtonRef = useRef(null);
@@ -263,40 +263,9 @@ export default function SiteLayout({ children }) {
       '--glow-main': activeThemeTokens.glowMain,
       '--glow-warm': activeThemeTokens.glowWarm,
       '--glow-soft': activeThemeTokens.glowSoft,
-      '--glow-line': activeThemeTokens.glowLine,
-      '--layout-main-max': activeTheme.layout.mainMax,
-      '--layout-main-gap': activeTheme.layout.mainGap,
-      '--layout-main-top': activeTheme.layout.mainTop,
-      '--layout-main-bottom': activeTheme.layout.mainBottom,
-      '--layout-header-columns': activeTheme.layout.headerColumns,
-      '--layout-brand-order': String(activeTheme.layout.brandOrder),
-      '--layout-nav-order': String(activeTheme.layout.navOrder),
-      '--layout-actions-order': String(activeTheme.layout.actionsOrder),
-      '--layout-brand-align': activeTheme.layout.brandAlign,
-      '--layout-nav-align': activeTheme.layout.navAlign,
-      '--layout-actions-align': activeTheme.layout.actionsAlign,
-      '--layout-trainer-columns': activeTheme.layout.trainerColumns,
-      '--layout-guest-columns': activeTheme.layout.guestColumns,
-      '--layout-summary-columns': activeTheme.layout.summaryColumns,
-      '--layout-operation-columns': activeTheme.layout.operationColumns,
-      '--layout-panel-radius': activeTheme.layout.panelRadius,
-      '--layout-panel-border-width': activeTheme.layout.panelBorderWidth,
-      '--layout-card-tilt': activeTheme.layout.cardTilt,
-      '--layout-card-lift': activeTheme.layout.cardLift,
-      '--layout-hero-size': activeTheme.layout.heroSize,
-      '--layout-hero-rotate': activeTheme.layout.heroRotate,
-      '--layout-hero-offset-x': activeTheme.layout.heroOffsetX,
-      '--layout-hero-offset-y': activeTheme.layout.heroOffsetY,
-      '--layout-hero-accent-width': activeTheme.layout.heroAccentWidth,
-      '--layout-hero-accent-height': activeTheme.layout.heroAccentHeight,
-      '--layout-hero-accent-rotate': activeTheme.layout.heroAccentRotate,
-      '--layout-hero-accent-x': activeTheme.layout.heroAccentX,
-      '--layout-hero-accent-y': activeTheme.layout.heroAccentY,
-      '--layout-bg-angle': activeTheme.layout.bgAngle,
-      '--layout-bg-stop': activeTheme.layout.bgStop,
-      '--layout-animation-duration': activeTheme.layout.animationDuration
+      '--glow-line': activeThemeTokens.glowLine
     }),
-    [activeTheme, activeThemeTokens]
+    [activeThemeTokens]
   );
 
   const navLinks = [
@@ -321,15 +290,22 @@ export default function SiteLayout({ children }) {
   ];
 
   const handleSignOut = useCallback(async () => {
-    closeUtilityDrawer();
-    if (!(await requestActiveSessionExit('sign-out'))) return;
-
-    const { error } = await signOut();
-    if (!error) {
+    if (signingOutRef.current) return;
+    signingOutRef.current = true;
+    setSignOutFailure(null);
+    try {
       closeUtilityDrawer();
-      await router.push('/login');
+      if (!(await requestActiveSessionExit('sign-out'))) return;
+      const { error } = await signOut();
+      if (error) throw error;
+    } catch {
+      setSignOutFailure(user?.id);
+      return;
+    } finally {
+      signingOutRef.current = false;
     }
-  }, [closeUtilityDrawer, requestActiveSessionExit, router, signOut]);
+    await router.push('/login');
+  }, [closeUtilityDrawer, requestActiveSessionExit, router, signOut, user?.id]);
 
   const handleInternalLinkCapture = useCallback((event) => {
     if (!hasActiveSession || event.defaultPrevented || event.button !== 0 ||
@@ -368,17 +344,11 @@ export default function SiteLayout({ children }) {
     [upsertPreferences]
   );
 
-  const handleInterfaceStyleChange = useCallback(
-    (nextInterfaceStyle) => upsertPreferences({ interfaceStyle: nextInterfaceStyle }),
-    [upsertPreferences]
-  );
-
   const handleResetAppearance = useCallback(
     () =>
       upsertPreferences({
         themeKey: DEFAULT_THEME_KEY,
-        displayMode: DEFAULT_DISPLAY_MODE,
-        interfaceStyle: DEFAULT_INTERFACE_STYLE
+        displayMode: DEFAULT_DISPLAY_MODE
       }),
     [upsertPreferences]
   );
@@ -494,8 +464,6 @@ export default function SiteLayout({ children }) {
       onClickCapture={handleInternalLinkCapture}
       data-theme-key={activeTheme.key}
       data-display-mode={displayMode}
-      data-interface-style={interfaceStyle}
-      data-interface-collection={Boolean(INTERFACE_ARTWORK[interfaceStyle]) || undefined}
       data-session-active={hasActiveSession || undefined}
       data-resolved-mode={resolvedDisplayMode}
       style={themeStyle}
@@ -514,29 +482,8 @@ export default function SiteLayout({ children }) {
       <header className='site-header'>
         <div className='site-header-inner'>
           <Link href='/' className='brand' aria-label='Mental Math home'>
-            {INTERFACE_ARTWORK[interfaceStyle] ? (
-              <>
-                <svg className='collection-brand-symbol' viewBox='0 0 40 40' aria-hidden='true' focusable='false'>
-                  <path d='M7 5h8v10h10V5h8v30h-8V23H15v12H7z' fill='currentColor' />
-                  <path d='M3 19h34v3H3z' fill='var(--header-surface)' />
-                </svg>
-                <span className='brand-title'>Mental Math
-                  <span className='collection-brand-edition'>{INTERFACE_STYLE_OPTIONS.find((option) => option.value === interfaceStyle)?.label}</span>
-                </span>
-              </>
-            ) : interfaceStyle === 'kira' ? (
-              <>
-                <svg className='kira-brand-icon' viewBox='0 0 100 100' aria-hidden='true' focusable='false'>
-                  <use href='/images/kira-math-pattern.svg#flashcards' />
-                </svg>
-                <span className='brand-title kira-brand-title'>Mental<span>Math</span></span>
-              </>
-            ) : (
-              <>
-                <span className='brand-chip'>Studio</span>
-                <span className='brand-title'>Mental Math</span>
-              </>
-            )}
+            <span className='brand-chip'>Studio</span>
+            <span className='brand-title'>Mental Math</span>
           </Link>
 
           <nav className='site-nav' aria-label='Primary'>
@@ -568,6 +515,16 @@ export default function SiteLayout({ children }) {
                 <IconLabel icon={ListChecksIcon} className='icon-label-button'>Menu</IconLabel>
               </summary>
               <div className='mobile-navigation-panel'>
+                <button
+                  type='button'
+                  className='button button-quiet mobile-navigation-close'
+                  onClick={() => {
+                    closeUtilityDrawer();
+                    mobileMenuRef.current?.querySelector('summary')?.focus();
+                  }}
+                >
+                  Close menu
+                </button>
                 <nav aria-label='Mobile primary'>
                   {navLinks.map(link => (
                     <Link key={link.href} href={link.href}
@@ -667,12 +624,10 @@ export default function SiteLayout({ children }) {
             activeTheme={activeTheme}
             closeButtonRef={utilityCloseButtonRef}
             displayMode={displayMode}
-            interfaceStyle={interfaceStyle}
             drawerRef={utilityDrawerRef}
             isLoadingPreferences={isLoadingPreferences}
             onClose={closeUtilityDrawer}
             onDisplayModeChange={handleDisplayModeChange}
-            onInterfaceStyleChange={handleInterfaceStyleChange}
             onResetAppearance={handleResetAppearance}
             onThemeChange={handleThemeChange}
           />
@@ -680,6 +635,12 @@ export default function SiteLayout({ children }) {
       )}
 
       <main id='main-content' className='site-main'>
+        {user && signOutFailure === user.id && (
+          <div className='feedback warning'>
+            <p role='alert'>Could not log out. This browser may still be signed in.</p>
+            <button type='button' className='button button-quiet' onClick={handleSignOut}>Retry log out</button>
+          </div>
+        )}
         {children}
       </main>
 

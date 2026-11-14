@@ -29,6 +29,7 @@ export default function useProgressDashboard(auth) {
   const [isResetting, setIsResetting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [syncError, setSyncError] = useState('');
+  const [rejectedCount, setRejectedCount] = useState(0);
   const [importOffer, setImportOffer] = useState(null);
   const [isImporting, setIsImporting] = useState(false);
   const [importDismissed, setImportDismissed] = useState(false);
@@ -44,7 +45,7 @@ export default function useProgressDashboard(auth) {
   const isCurrent = () => currentUserIdRef.current === userId;
   function applyIfCurrent(action) { if (isCurrent()) action(); }
 
-  const loadLogs = useCallback(async function loadProgressLogs() {
+  const loadLogs = useCallback(async function loadProgressLogs(options) {
     if (currentUserIdRef.current !== userId) return;
     const sequence = ++loadSequenceRef.current;
     setIsLoading(true);
@@ -52,10 +53,11 @@ export default function useProgressDashboard(auth) {
     setSyncError('');
 
     try {
-      const snapshot = await loadProgressSnapshot(client, userId, () => currentUserIdRef.current === userId);
+      const snapshot = await loadProgressSnapshot(client, userId, () => currentUserIdRef.current === userId, options);
       if (sequence !== loadSequenceRef.current || !snapshot) return;
       setDashboardData(snapshot.dashboard);
       setSyncError(snapshot.syncError ? failureMessage(snapshot.syncError, 'Some pending answers could not sync. Refresh to retry.') : '');
+      setRejectedCount(snapshot.rejectedCount ?? 0);
       setIsLoading(false);
     } catch (error) {
       if (sequence !== loadSequenceRef.current) return;
@@ -81,7 +83,7 @@ export default function useProgressDashboard(auth) {
   }, [userId]);
 
   const handleClearGuestHistory = async () => {
-    if (!window.confirm('Clear saved device history? This does not change your theme or trainer settings.')) return;
+    if (!window.confirm('Clear saved device history? Recent active rounds and your settings will be kept.')) return;
     setIsResetting(true);
     return runProgressAction(async () => {
       await clearGuestHistory();
@@ -126,12 +128,13 @@ export default function useProgressDashboard(auth) {
       applyIfCurrent(() => {
         loadSequenceRef.current += 1;
         setDashboardData(createEmptyProgressDashboard());
+        setRejectedCount(0);
       });
     }, error => applyIfCurrent(() => setErrorMessage(failureMessage(error, 'Could not reset account progress.'))),
     () => applyIfCurrent(() => setIsResetting(false)));
   };
 
-  return { dashboardData, isLoading, isResetting, errorMessage, syncError, importOffer,
+  return { dashboardData, isLoading, isResetting, errorMessage, syncError, rejectedCount, importOffer,
     isImporting, importDismissed, setImportDismissed, loadLogs, handleClearGuestHistory,
     handleImport, handleReset };
 }

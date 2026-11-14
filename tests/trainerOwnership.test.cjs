@@ -14,9 +14,37 @@ async function fixture(t, mode, initialUser = null) {
   });
   dependencies['utils/useAccountProgressRound.js'] = roundStart;
   dependencies['utils/utils.js'] = { DIGIT_OPTIONS: [1, 2, 3, 4, 5, 6, 7, 8] };
-  let auth = { client: { rpc: async () => ({ data: '0', error: null }) }, session: { access_token: 'test' }, user: initialUser, isAdmin: false };
-  const calls = { guest: [], account: [], finished: [] };
-  const buffer = { enqueue: row => calls.account.push(row), flush: async () => {}, clear() {}, dispose() {} };
+  const calls = { guest: [], account: [], finished: [], stored: [] };
+  let generation = '0';
+  let flushFailure;
+  let flushWrites = true;
+  const client = {
+    rpc: async () => ({ data: generation, error: null }),
+    from() {
+      const filters = {};
+      const query = {
+        select: () => query,
+        eq(key, value) { filters[key] = value; return query; },
+        async lte(_key, total) {
+          const count = calls.stored.filter(row =>
+            Object.entries(filters).every(([key, value]) => row[key] === value) && row.question_index <= total
+          ).length;
+          return { count, error: null };
+        }
+      };
+      return query;
+    }
+  };
+  let auth = { client, session: { access_token: 'test' }, user: initialUser, isAdmin: false };
+  const buffer = {
+    enqueue: row => calls.account.push(row),
+    async flush() {
+      if (flushFailure) throw flushFailure;
+      if (flushWrites) calls.stored = [...calls.account];
+      return { flushedCount: 0 };
+    },
+    clear() {}, dispose() {}
+  };
   const settings = dependencies['utils/mathEngine.js'].sanitizeSettings({ operation: 'ADDITION', roundSize: 3, leftDigits: 1, rightDigits: 1 });
   const mixedSettings = dependencies['utils/mixedDifficulty.js'].sanitizeMixedSettings({
     additionDifficulty: 'warmup', exponentiationDifficulty: 'off', multiplicationDifficulty: 'off', subtractionDifficulty: 'off', divisionDifficulty: 'off', roundSize: 3
@@ -34,6 +62,9 @@ async function fixture(t, mode, initialUser = null) {
   dependencies['utils/progressLogs.js'] = { ...dependencies['utils/progressLogs.js'], createProgressLogBuffer: () => buffer };
   dependencies['utils/aiModeLogs.js'] = { ...dependencies['utils/aiModeLogs.js'], createAiModeLogBuffer: () => buffer };
   dependencies['utils/aiMath.js'] = {};
+  const { exports: summaryExports } = require('./helpers/renderPage.cjs').loadModule('components/RoundSummaryPanel.js', dependencies);
+  const summaryPanel = summaryExports.default;
+  dependencies['components/RoundSummaryPanel.js'] = summaryExports;
   dependencies['utils/supabaseClient.js'] = { getSupabaseRestConfig: () => null };
   dependencies['utils/progressStorage.js'] = {
     startGuestSession: async () => {}, touchGuestSession: async () => {},
@@ -72,7 +103,12 @@ async function fixture(t, mode, initialUser = null) {
   const isActive = () => mode === 'mixed'
     ? renderer.root.findAllByType(components.get('components/mixed/Keypad.js')).length > 0
     : renderer.root.findAllByProps({ id: 'answerInput' }).length > 0;
-  return { start, submit, changeUser, advance, isActive, calls };
+  return { start, submit, changeUser, advance, isActive, calls,
+    resetOnServer() { generation = '1'; calls.stored = []; },
+    setFlushFailure(error) { flushFailure = error; },
+    stopWriting() { flushWrites = false; },
+    summary: () => renderer.root.findByType(summaryPanel).props
+  };
 }
 
 for (const mode of ['standard', 'mixed']) {
@@ -87,7 +123,40 @@ for (const mode of ['standard', 'mixed']) {
     assert.equal(app.calls.finished.length, 1);
     assert.equal(app.calls.finished[0].state, 'ended');
   });
+
+  test(`${mode} retry distinguishes an empty flush from an acknowledged round or reset`, async t => {
+    const app = await fixture(t, mode, { id: `${mode}-saved-round` });
+    app.setFlushFailure(new Error('Temporary write failure'));
+    await app.start();
+    for (let index = 0; index < 3; index++) {
+      await app.submit();
+      if (mode === 'mixed') await app.advance();
+    }
+    assert.match(app.summary().saveStatus, /Temporary write failure/);
+    app.setFlushFailure(null);
+    app.stopWriting();
+    await act(async () => app.summary().retryAction.onClick());
+    assert.match(app.summary().saveStatus, /have not synced/);
+    app.resetOnServer();
+    await act(async () => app.summary().retryAction.onClick());
+    assert.match(app.summary().saveStatus, /progress was reset/);
+    assert.equal(app.summary().retryAction, null);
+  });
 }
+
+test('a background upload can acknowledge a Standard round even when its final flush is empty', async t => {
+  const app = await fixture(t, 'standard', { id: 'background-upload' });
+  app.stopWriting();
+  await app.start();
+  for (let index = 0; index < 2; index++) await app.submit();
+  app.calls.stored = [...app.calls.account];
+  assert.equal(app.calls.stored.length, 2);
+  await app.submit();
+  assert.match(app.summary().saveStatus, /have not synced/);
+  app.calls.stored = [...app.calls.account];
+  await act(async () => app.summary().retryAction.onClick());
+  assert.match(app.summary().saveStatus, /saved to your progress/);
+});
 
 test('account changes cancel Mixed feedback instead of restoring the previous account round', async t => {
   const app = await fixture(t, 'mixed', { id: 'account-a' });

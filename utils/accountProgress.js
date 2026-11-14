@@ -1,7 +1,7 @@
 import {
   acknowledgeAccountProgressRows, claimGuestSessionImport, clearPendingAccountProgressRows, getGuestHistory,
   recoverInterruptedGuestSessions,
-  getPendingAccountProgressRows, markGuestSessionImported
+  countRejectedAccountProgressRows, getPendingAccountProgressRows, markGuestSessionImported, rejectAccountProgressRow
 } from './progressStorage.js';
 import { buildGuestProgressDashboard, fetchProgressDashboardData } from './progressDashboard.js';
 import { persistProgressLogBatches } from './progressLogs.js';
@@ -15,12 +15,8 @@ async function assertAccount(client, userId, isCurrent) {
   }
 }
 
-async function replayCurrentGeneration(client, userId, batch) {
-  const generation = await getAccountProgressGeneration(client, userId);
-  const current = batch.filter(row => String(row.reset_generation ?? 0) === generation);
-  if (current.length === batch.length) throw new Error('Progress could not sync after checking the latest reset. Refresh to retry.');
-  await persistProgressLogBatches(client, current, 500);
-}
+const ROW_REJECTION_CODES = new Set(['22P02', '22001', '22003', '22007', '22008', '23502', '23514']);
+const PROGRESS_BATCH_SIZE = 500;
 
 function sessionAttempts(history, sessionId) {
   return history.attempts.filter(attempt => attempt.sessionId === sessionId)
@@ -32,22 +28,45 @@ function guestImportRows(attempts, userId, generation) {
     created_at: attempt.createdAt, reset_generation: generation }));
 }
 
-async function replayBatch(client, userId, batch) {
+function splitBatch(batch) {
+  const middle = Math.floor(batch.length / 2);
+  return [batch.slice(0, middle), batch.slice(middle)];
+}
+
+async function replayBatch({ client, userId, isCurrent }, batch) {
+  if (!batch.length) return;
+  if (!isCurrent()) throw new Error('Sync stopped because the account changed.');
   try {
-    await persistProgressLogBatches(client, batch, 500);
+    await persistProgressLogBatches(client, batch, PROGRESS_BATCH_SIZE);
   } catch (error) {
-    if (error.code !== STALE_PROGRESS_WRITE) throw error;
-    await replayCurrentGeneration(client, userId, batch);
+    return recoverRejectedBatch({ client, userId, isCurrent }, batch, error);
   }
   await acknowledgeAccountProgressRows(batch);
 }
 
-export function replayAccountProgress(client, userId, isCurrent) {
+async function recoverRejectedBatch(scope, batch, error) {
+  if (error.code === STALE_PROGRESS_WRITE) return replayAfterReset(scope, batch, error);
+  if (!ROW_REJECTION_CODES.has(error.code)) throw error;
+  if (batch.length === 1) return rejectAccountProgressRow(batch[0]);
+  for (const part of splitBatch(batch)) await replayBatch(scope, part);
+}
+
+async function replayAfterReset(scope, batch, error) {
+  const generation = await getAccountProgressGeneration(scope.client, scope.userId);
+  const isCurrentRow = row => String(row.reset_generation ?? 0) === generation;
+  const current = batch.filter(isCurrentRow);
+  if (current.length === batch.length) throw error;
+  await replayBatch(scope, current);
+  await acknowledgeAccountProgressRows(batch.filter(row => !isCurrentRow(row)));
+}
+
+export function replayAccountProgress(client, userId, isCurrent, { retryRejected = false } = {}) {
   return withAccountProgressWrite(userId, async () => {
-    const pending = await getPendingAccountProgressRows(userId);
-    for (let offset = 0; offset < pending.length; offset += 500) {
+    const pending = await getPendingAccountProgressRows(userId, { includeRejected: retryRejected });
+    const scope = { client, userId, isCurrent };
+    for (let offset = 0; offset < pending.length; offset += PROGRESS_BATCH_SIZE) {
       await assertAccount(client, userId, isCurrent);
-      await replayBatch(client, userId, pending.slice(offset, offset + 500));
+      await replayBatch(scope, pending.slice(offset, offset + PROGRESS_BATCH_SIZE));
     }
   });
 }
@@ -79,16 +98,17 @@ export async function importGuestProgress({ client, userId, history, isCurrent }
   } else await work();
 }
 
-export async function loadProgressSnapshot(client, userId, isCurrent) {
+export async function loadProgressSnapshot(client, userId, isCurrent, options) {
   if (!userId) {
     await recoverInterruptedGuestSessions();
     return { dashboard: buildGuestProgressDashboard(await getGuestHistory()), syncError: null };
   }
   let syncError = null;
-  try { await replayAccountProgress(client, userId, isCurrent); }
+  try { await replayAccountProgress(client, userId, isCurrent, options); }
   catch (error) { syncError = error; }
+  const rejectedCount = await countRejectedAccountProgressRows(userId).catch(() => 0);
   if (!isCurrent()) return null;
-  return { dashboard: await fetchProgressDashboardData(client), syncError };
+  return { dashboard: await fetchProgressDashboardData(client), syncError, rejectedCount };
 }
 
 export function resetProgressForAccount(client, userId, isCurrent) {

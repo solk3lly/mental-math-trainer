@@ -13,7 +13,7 @@ through Supabase when account features are configured.
 - Decimal drills for addition, subtraction, multiplication, and division.
 - Automatic answer checking, keyboard input, and an on-screen keypad.
 - Configurable round length, timer visibility, and digit direction.
-- Twelve interface styles and 59 color themes, with independent Light, Dark, and
+- A fixed Studio layout and 59 color themes, with independent Light, Dark, and
   system-adaptive display modes.
 - Round summaries with accuracy, correct-answer counts, average response, and total time.
 - Device history and a 90-day Progress view for guests; account progress and
@@ -39,7 +39,7 @@ The mixed trainer uses difficulty levels per operation:
 | Division       | Off, Warmup, Easy, Medium, Hard         |
 
 Letter shortcuts can be disabled under **Utility → Keyboard shortcuts**. The
-choice is stored in this browser. Enter continues to submit answers.
+choice is stored in this browser when storage is available. Enter continues to submit answers.
 
 The administrator's custom calculator runs in a cancellable worker with a
 1.5-second deadline. Expressions are limited to 1,024 characters, 128 syntax
@@ -50,17 +50,9 @@ smaller expression and leaves the trainer responsive.
 
 ## Appearance
 
-Open **Utility → Appearance** to choose an interface, color theme, and display
-mode. Each setting is independent, so your selected palette works across all
-twelve interfaces:
-
-- Studio (default), Opaline Abacus, Körner Club, and Kira Kira.
-- Pocket Calculator, Riso Math Club, Orbital Academy, and Sunday Crossword.
-- Track & Field, Bauhaus Blocks, Field Notes, and Arcade Micro.
-
-The eight interface collections include original, palette-adaptive SVG artwork.
-See [Interface collections](docs/design-collections.md) for their visual styles
-and implementation details.
+Studio is the fixed interface. Open **Utility → Appearance** to choose from 59
+color themes and Light, Dark, or Adaptive display modes. Appearance reset restores
+Carbon Paper and Adaptive mode.
 
 ## Guest Mode and Progress
 
@@ -76,6 +68,9 @@ this history.
 
 After signing in, choose **Import history** on the Progress page to copy guest
 history into your account. Import happens only when you choose it.
+If the database permanently rejects a queued answer, Progress shows how many
+answers were kept on this device and offers a separate retry. Other answers
+continue syncing.
 
 ## Local Development
 
@@ -114,15 +109,19 @@ Without those values, the app still works in guest mode.
 
 Apply all SQL migrations in [`supabase/migrations`](supabase/migrations) in
 chronological order. They create the progress and preference tables, dashboard
-functions, retention rules, and account preference sync. Existing installations
-also need the interface-style migrations:
+functions, retention rules, and account preference sync. Historical migrations
+remain in the sequence for existing installations and fresh setup.
 
-- `20260929000000_add_interface_style.sql`
-- `20261014000000_add_korner_interface_style.sql`
-- `20261014010000_add_kira_interface_style.sql`
-- `20261015000000_add_interface_collections.sql`
+Apply `20261114030000_grant_authenticated_web_table_access.sql` to grant the
+authenticated role access to the web preference and progress tables. This works
+with Supabase automatic table exposure disabled. Row policies still govern which
+rows the signed-in account can access.
 
-The interface-collection migration enables account sync for all twelve styles.
+The selectable interface feature has been removed. Deploy this web code before
+applying `20261114020000_remove_interface_style.sql`, which drops only the retired
+`user_preferences.interface_style` column. Theme, display mode, trainer settings,
+accounts, and progress remain intact. Older clients that still select the removed
+column must refresh or update after that migration.
 
 Apply the November 14 migrations before serving this web version:
 
@@ -139,14 +138,16 @@ The retention job runs as the migration owner. For a self-hosted database, arran
 and [Supabase Cron guide](https://supabase.com/docs/guides/cron).
 
 Guest tabs use Web Locks to protect live rounds during recovery and import.
-Browsers without that API keep active sessions out of automatic recovery; their
-history remains visible, and completed sessions remain importable.
+Without Web Locks, the browser protects rounds in the current tab and treats
+rounds in other tabs as abandoned after 24 hours without an update. Clear device
+history includes those abandoned rounds. Finish rounds before leaving another
+tab suspended for a day or more.
 
 Apply `20261102055520_add_user_preferences_revision.sql` before deploying this
 version. Preference saves and Realtime updates use a database-generated revision
 to preserve their order across devices with different clocks.
 
-For password recovery, add each environment's `/reset-password` URL to the
+Add each environment's `/verify` and `/reset-password` URLs to the
 Supabase Auth redirect URL allowlist, including
 `http://localhost:3000/reset-password` for local development. Configure email
 delivery and verify the reset-link flow. Users request a link at

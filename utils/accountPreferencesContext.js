@@ -30,7 +30,6 @@ const defaultPreferences = createDefaultAccountPreferences();
 const AccountPreferencesContext = createContext({
   themeKey: defaultPreferences.themeKey,
   displayMode: defaultPreferences.displayMode,
-  interfaceStyle: defaultPreferences.interfaceStyle,
   trainerSettings: defaultPreferences.trainerSettings,
   isLoadingPreferences: false,
   upsertPreferences: async () => ({ error: null })
@@ -252,7 +251,6 @@ export function AccountPreferencesProvider({ children }) {
     () => ({
       themeKey: preferences.themeKey,
       displayMode: preferences.displayMode,
-      interfaceStyle: preferences.interfaceStyle,
       trainerSettings: preferences.trainerSettings,
       isLoadingPreferences,
       upsertPreferences

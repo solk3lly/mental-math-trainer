@@ -9,6 +9,15 @@ import {
 } from 'utils/authLoginHandoff.js';
 import { useSupabaseAuth } from 'utils/supabaseAuthContext.js';
 
+function PasswordFieldHeader() {
+  return (
+    <div className='auth-field-header'>
+      <label htmlFor='login-password'>Password</label>
+      <Link href='/forgot-password' className='text-link auth-recovery-link'>Forgot password?</Link>
+    </div>
+  );
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const { client, user, isConfigured } = useSupabaseAuth();
@@ -96,8 +105,7 @@ export default function LoginPage() {
               onChange={(event) => setEmail(event.target.value)}
             />
 
-            <label htmlFor='login-password'>Password</label>
-            <Link href='/forgot-password' className='text-link auth-recovery-link'>Forgot password?</Link>
+            <PasswordFieldHeader />
             <input
               id='login-password'
               type='password'

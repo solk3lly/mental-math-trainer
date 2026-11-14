@@ -16,7 +16,6 @@ let THEME_OPTIONS;
 let USER_PREFERENCES_COLUMNS;
 let writeGuestAccountPreferences;
 let DEFAULT_THEME_KEY;
-let DEFAULT_INTERFACE_STYLE;
 
 function createStorageMock(seed = {}) {
   const store = new Map(Object.entries(seed));
@@ -39,10 +38,6 @@ test.before(async () => {
   const themes = await import(
     pathToFileURL(path.resolve(__dirname, '../utils/themes.js')).href
   );
-  const interfaceStyles = await import(
-    pathToFileURL(path.resolve(__dirname, '../utils/interfaceStyle.js')).href
-  );
-
   ({
     buildUserPreferencesRow,
     createDefaultAccountPreferences,
@@ -56,7 +51,6 @@ test.before(async () => {
     writeGuestAccountPreferences
   } = accountPreferences);
   ({ DEFAULT_THEME_KEY, getThemeOptionLabel, THEME_OPTIONS } = themes);
-  ({ DEFAULT_INTERFACE_STYLE } = interfaceStyles);
 });
 
 test('sanitizeAccountPreferences falls back to defaults when the row is missing', () => {
@@ -64,7 +58,6 @@ test('sanitizeAccountPreferences falls back to defaults when the row is missing'
 
   assert.deepEqual(preferences, createDefaultAccountPreferences());
   assert.equal(preferences.themeKey, 'carbon-paper');
-  assert.equal(preferences.interfaceStyle, 'studio');
 });
 
 test('theme catalog exposes carbon-paper as the first option with the default label', () => {
@@ -76,7 +69,6 @@ test('sanitizeAccountPreferences clamps invalid trainer data and falls back to t
   const preferences = sanitizeAccountPreferences({
     theme_key: 'not-a-real-theme',
     display_mode: 'sepia',
-    interface_style: 'unknown',
     trainer_practice_mode: 'DECIMAL',
     trainer_operation: 'DIVISION',
     trainer_left_digits: 2,
@@ -88,7 +80,6 @@ test('sanitizeAccountPreferences clamps invalid trainer data and falls back to t
 
   assert.equal(preferences.themeKey, DEFAULT_THEME_KEY);
   assert.equal(preferences.displayMode, 'adaptive');
-  assert.equal(preferences.interfaceStyle, DEFAULT_INTERFACE_STYLE);
   assert.deepEqual(preferences.trainerSettings, {
     practiceMode: 'DECIMAL',
     operation: 'DIVISION',
@@ -105,7 +96,6 @@ test('mergeAccountPreferences preserves unrelated fields across partial updates'
   const current = sanitizeAccountPreferences({
     theme_key: 'studio-vermouth',
     display_mode: 'dark',
-    interface_style: 'opaline',
     trainer_practice_mode: 'POSITIVE',
     trainer_operation: 'ADDITION',
     trainer_left_digits: 3,
@@ -120,7 +110,6 @@ test('mergeAccountPreferences preserves unrelated fields across partial updates'
   });
   assert.equal(themeUpdate.themeKey, 'paper-lantern');
   assert.equal(themeUpdate.displayMode, 'dark');
-  assert.equal(themeUpdate.interfaceStyle, 'opaline');
   assert.deepEqual(themeUpdate.trainerSettings, current.trainerSettings);
 
   const displayModeUpdate = mergeAccountPreferences(current, {
@@ -128,15 +117,7 @@ test('mergeAccountPreferences preserves unrelated fields across partial updates'
   });
   assert.equal(displayModeUpdate.themeKey, current.themeKey);
   assert.equal(displayModeUpdate.displayMode, 'light');
-  assert.equal(displayModeUpdate.interfaceStyle, 'opaline');
   assert.deepEqual(displayModeUpdate.trainerSettings, current.trainerSettings);
-
-  const interfaceUpdate = mergeAccountPreferences(current, {
-    interfaceStyle: 'studio'
-  });
-  assert.equal(interfaceUpdate.interfaceStyle, 'studio');
-  assert.equal(interfaceUpdate.themeKey, current.themeKey);
-  assert.equal(interfaceUpdate.displayMode, current.displayMode);
 
   const trainerUpdate = mergeAccountPreferences(current, {
     trainerSettings: {
@@ -150,7 +131,6 @@ test('mergeAccountPreferences preserves unrelated fields across partial updates'
   });
   assert.equal(trainerUpdate.themeKey, current.themeKey);
   assert.equal(trainerUpdate.displayMode, 'dark');
-  assert.equal(trainerUpdate.interfaceStyle, 'opaline');
   assert.deepEqual(trainerUpdate.trainerSettings, {
     practiceMode: 'DECIMAL',
     operation: 'DIVISION',
@@ -169,7 +149,6 @@ test('buildUserPreferencesRow produces the expected database payload', () => {
     {
       themeKey: 'paper-lantern',
       displayMode: 'dark',
-      interfaceStyle: 'opaline',
       trainerSettings: {
         practiceMode: 'DECIMAL',
         operation: 'SUBTRACTION',
@@ -186,7 +165,6 @@ test('buildUserPreferencesRow produces the expected database payload', () => {
     user_id: 'user-123',
     theme_key: 'paper-lantern',
     display_mode: 'dark',
-    interface_style: 'opaline',
     trainer_practice_mode: 'DECIMAL',
     trainer_operation: 'SUBTRACTION',
     trainer_left_digits: 4,
@@ -205,7 +183,6 @@ test('guest account preferences persist through local storage helpers', () => {
     {
       themeKey: 'paper-lantern',
       displayMode: 'light',
-      interfaceStyle: 'opaline',
       trainerSettings: {
         practiceMode: 'DECIMAL',
         operation: 'DIVISION',
@@ -224,7 +201,6 @@ test('guest account preferences persist through local storage helpers', () => {
   assert.deepEqual(readGuestAccountPreferences(storage), {
     themeKey: 'paper-lantern',
     displayMode: 'light',
-    interfaceStyle: 'opaline',
     trainerSettings: {
       practiceMode: 'DECIMAL',
       operation: 'DIVISION',
@@ -237,45 +213,6 @@ test('guest account preferences persist through local storage helpers', () => {
     }
   });
 });
-
-for (const packagingStyle of ['korner', 'kira']) {
-test(`${packagingStyle} interface changes and guest reloads preserve the selected appearance and trainer settings`, () => {
-  const storage = createStorageMock();
-  const current = {
-    themeKey: 'midnight-abacus',
-    displayMode: 'dark',
-    interfaceStyle: 'opaline',
-    trainerSettings: {
-      practiceMode: 'POSITIVE',
-      operation: 'ADDITION',
-      leftDigits: 3,
-      rightDigits: 2,
-      leftDecimalDigits: 2,
-      rightDecimalDigits: 2,
-      maxBase: 10,
-      roundSize: 40
-    }
-  };
-
-  const selected = mergeAccountPreferences(current, { interfaceStyle: packagingStyle });
-  assert.equal(selected.interfaceStyle, packagingStyle);
-  assert.equal(selected.themeKey, 'midnight-abacus');
-  assert.equal(selected.displayMode, 'dark');
-  assert.deepEqual(selected.trainerSettings, current.trainerSettings);
-  assert.equal(writeGuestAccountPreferences(selected, storage), true);
-
-  const restored = readGuestAccountPreferencesWithThemeRollout(storage);
-  assert.deepEqual(restored, selected);
-  assert.equal(readGuestAccountPreferences(storage).interfaceStyle, packagingStyle);
-
-  const appearanceUpdate = mergeAccountPreferences(restored, {
-    themeKey: 'paper-lantern',
-    displayMode: 'light'
-  });
-  assert.equal(appearanceUpdate.interfaceStyle, packagingStyle);
-  assert.deepEqual(appearanceUpdate.trainerSettings, current.trainerSettings);
-});
-}
 
 test('first-time guests land on the carbon-paper default theme and store the rollout marker', () => {
   const storage = createStorageMock();
@@ -290,14 +227,13 @@ test('first-time guests land on the carbon-paper default theme and store the rol
   );
 });
 
-test('guest theme rollout preserves a saved theme and interface choice', () => {
+test('guest theme rollout preserves a saved theme and display mode', () => {
   const storage = createStorageMock();
 
   writeGuestAccountPreferences(
     {
       themeKey: 'paper-lantern',
       displayMode: 'dark',
-      interfaceStyle: 'opaline',
       trainerSettings: {
         practiceMode: 'POSITIVE',
         operation: 'ADDITION',
@@ -316,7 +252,6 @@ test('guest theme rollout preserves a saved theme and interface choice', () => {
     readGuestAccountPreferencesWithThemeRollout(storage);
   assert.equal(rolledOutPreferences.themeKey, 'paper-lantern');
   assert.equal(rolledOutPreferences.displayMode, 'dark');
-  assert.equal(rolledOutPreferences.interfaceStyle, 'opaline');
 
   writeGuestAccountPreferences(
     {
@@ -330,31 +265,41 @@ test('guest theme rollout preserves a saved theme and interface choice', () => {
     readGuestAccountPreferencesWithThemeRollout(storage);
   assert.equal(preservedPreferences.themeKey, 'paper-lantern');
   assert.equal(preservedPreferences.displayMode, 'dark');
-  assert.equal(preservedPreferences.interfaceStyle, 'opaline');
 });
 
 test('signed-in preference selection includes the display mode column', () => {
   assert.match(USER_PREFERENCES_COLUMNS, /(?:^|, )display_mode(?:,|$)/);
-  assert.match(USER_PREFERENCES_COLUMNS, /(?:^|, )interface_style(?:,|$)/);
 });
 
-test('every theme, display mode, and interface style serializes for Supabase sync', () => {
+test('every theme and display mode serializes for Supabase sync', () => {
   for (const theme of THEME_OPTIONS) {
     for (const displayMode of ['light', 'dark', 'adaptive']) {
-      for (const interfaceStyle of ['studio', 'opaline', 'korner', 'kira']) {
-        const row = buildUserPreferencesRow(
-          'user-123',
-          { themeKey: theme.key, displayMode, interfaceStyle }
-        );
-        const restored = sanitizeAccountPreferences(row);
-
-        assert.equal(row.theme_key, theme.key);
-        assert.equal(row.display_mode, displayMode);
-        assert.equal(row.interface_style, interfaceStyle);
-        assert.equal(restored.themeKey, theme.key);
-        assert.equal(restored.displayMode, displayMode);
-        assert.equal(restored.interfaceStyle, interfaceStyle);
-      }
+      const row = buildUserPreferencesRow('user-123', { themeKey: theme.key, displayMode });
+      const restored = sanitizeAccountPreferences(row);
+      assert.equal(row.theme_key, theme.key);
+      assert.equal(row.display_mode, displayMode);
+      assert.equal(restored.themeKey, theme.key);
+      assert.equal(restored.displayMode, displayMode);
     }
   }
+});
+
+test('retired interface choices do not enter cloud payloads or overwrite retained guest preferences', () => {
+  const current = createDefaultAccountPreferences();
+  current.themeKey = 'paper-lantern';
+  current.displayMode = 'dark';
+  const legacyGuest = { ...current, interfaceStyle: 'kira' };
+  const storageKey = 'mathtrainer:guest-account-preferences';
+  const storage = createStorageMock({ [storageKey]: JSON.stringify(legacyGuest) });
+  const restored = readGuestAccountPreferences(storage);
+  assert.deepEqual(restored, current);
+  assert.equal(writeGuestAccountPreferences(restored, storage), true);
+  assert.deepEqual(JSON.parse(storage.getItem(storageKey)), current);
+
+  const row = buildUserPreferencesRow('user-123', restored);
+  assert.equal(Object.hasOwn(row, 'interface_style'), false);
+  assert.equal(USER_PREFERENCES_COLUMNS.split(', ').includes('interface_style'), false);
+  const oldCloudRow = { ...row, interface_style: 'korner' };
+  assert.deepEqual(sanitizeAccountPreferences(oldCloudRow), current);
+  assert.deepEqual(mergeAccountPreferences(restored, { interfaceStyle: 'opaline' }), current);
 });

@@ -5,7 +5,7 @@ import HotkeyHint from 'components/HotkeyHint.js';
 import EndRoundDialog from 'components/EndRoundDialog.js';
 import IconLabel from 'components/IconLabel.js';
 import PageIntro from 'components/PageIntro.js';
-import RoundSummaryPanel from 'components/RoundSummaryPanel.js';
+import RoundSummaryPanel, { getSaveStatusMessage } from 'components/RoundSummaryPanel.js';
 import ProgressBar from 'components/mixed/ProgressBar.js';
 import ArrowsClockwiseIcon from 'images/phosphor/arrows-clockwise.svg';
 import LightningIcon from 'images/phosphor/lightning.svg';
@@ -57,7 +57,8 @@ import { copyActiveRound, getActiveRoundStats } from 'utils/roundHistory.js';
 import { solveCalculatorExpression } from 'utils/aiCalculator.js';
 import { useSupabaseAuth } from 'utils/supabaseAuthContext.js';
 import useAccountProgressRound from 'utils/useAccountProgressRound.js';
-import { assertProgressRoundCurrent, getAccountProgressGeneration, withAccountProgressWrite } from 'utils/progressWriteCoordinator.js';
+import { assertProgressRoundCurrent, getAccountProgressGeneration, saveAccountRound,
+  STALE_PROGRESS_WRITE, withAccountProgressWrite } from 'utils/progressWriteCoordinator.js';
 import {
   TRAINER_COMPLETION_STATES,
   TRAINER_FINISH_VIEWS,
@@ -114,6 +115,8 @@ function createRoundSummary(
     attempts,
     settings,
     sessionId: meta.sessionId || null,
+    resetGeneration: meta.resetGeneration,
+    saveGeneration: meta.saveGeneration,
     ownerId: userId || null,
     sourceMode,
     completionState:
@@ -126,40 +129,6 @@ function createRoundSummary(
     saveState: 'saving',
     saveError: ''
   };
-}
-
-function getSaveStatusMessage(lastRound) {
-  if (lastRound.saveState === 'saving') {
-    return lastRound.wasTerminated
-      ? 'Ending session and saving progress...'
-      : 'Saving this round...';
-  }
-
-  if (lastRound.saveState === 'saved') {
-    return lastRound.wasTerminated
-      ? 'Session ended early and progress was saved to your history.'
-      : 'Round saved to your progress history.';
-  }
-
-  if (lastRound.saveState === 'device-saved') {
-    return lastRound.wasTerminated
-      ? 'Ended early. Submitted answers were saved on this device.'
-      : 'Round saved on this device.';
-  }
-
-  if (lastRound.saveState === 'idle') {
-    return lastRound.wasTerminated
-      ? 'Session ended early. Sign in to store partial progress.'
-      : 'Sign in to store completed rounds.';
-  }
-
-  if (lastRound.saveState === 'error') {
-    return lastRound.wasTerminated
-      ? `Could not save this ended session: ${lastRound.saveError}`
-      : `Could not save this round: ${lastRound.saveError}`;
-  }
-
-  return '';
 }
 
 function calculatorRequestError(isAdmin, expression) {
@@ -379,7 +348,7 @@ export default function TrainerPage() {
       summary?.sessionId === sessionId
         ? {
             ...summary,
-            saveState: 'error',
+            saveState: error?.code === STALE_PROGRESS_WRITE ? 'discarded' : 'error',
             saveError: error?.message || fallbackMessage
           }
         : summary
@@ -436,6 +405,8 @@ export default function TrainerPage() {
         sourceMode,
         {
           sessionId: finishingSessionId,
+          resetGeneration: finishingRound?.resetGeneration,
+          saveGeneration: finishingRound?.writeGeneration,
           aiAutoCycle,
           blueprintLabel,
           ...(generationError ? { completionState: TRAINER_COMPLETION_STATES.ERROR, generationError: generationError.message } : {})
@@ -463,12 +434,11 @@ export default function TrainerPage() {
       }
 
       try {
-        assertProgressRoundCurrent(finishingRound, userId);
-        if (sourceMode === TRAINER_INPUT_MODES.AI) {
-          await persistQueuedAiModeLogs({ keepalive });
-        } else {
-          await persistQueuedProgress({ keepalive });
-        }
+        const ai = sourceMode === TRAINER_INPUT_MODES.AI;
+        await saveAccountRound(clientRef.current, summary, {
+          table: ai ? 'ai_mode_logs' : 'progress_logs',
+          flush: ai ? persistQueuedAiModeLogs : persistQueuedProgress, keepalive
+        });
         markSummarySaved(finishingSessionId);
         return { saved: true, error: null };
       } catch (error) {
@@ -831,8 +801,11 @@ export default function TrainerPage() {
       ? { ...current, saveState: 'saving', saveError: '' } : current);
     try {
       if (summary.ownerId) {
-        if (summary.sourceMode === TRAINER_INPUT_MODES.AI) await persistQueuedAiModeLogs();
-        else await persistQueuedProgress();
+        const ai = summary.sourceMode === TRAINER_INPUT_MODES.AI;
+        await saveAccountRound(clientRef.current, summary, {
+          table: ai ? 'ai_mode_logs' : 'progress_logs',
+          flush: ai ? persistQueuedAiModeLogs : persistQueuedProgress
+        });
         markSummarySaved(summary.sessionId);
       } else {
         await startGuestSession({
@@ -1392,6 +1365,7 @@ export default function TrainerPage() {
     className = '',
     copy = '',
     saveStatus = '',
+    retryAction = null,
     primaryAction = null,
     secondaryAction = null
   } = {}) => (
@@ -1474,7 +1448,8 @@ export default function TrainerPage() {
           </section>
         )}
 
-        {saveStatus && <p className='save-status'>{saveStatus}</p>}
+        {saveStatus && <p className='save-status' role='status'>{saveStatus}</p>}
+        {retryAction && <button type='button' className='button button-quiet' onClick={retryAction}>Retry save</button>}
 
         {(primaryAction || secondaryAction) && (
           <div className='summary-actions'>
@@ -2047,6 +2022,7 @@ export default function TrainerPage() {
                 className: 'summary-panel-centered',
                 copy: 'Use Live Arena as a calculator, or restart the same mode when you are ready.',
                 saveStatus: getSaveStatusMessage(lastRound),
+                retryAction: lastRound.saveState === 'error' && lastRound.sessionId ? () => void retryRoundSave() : null,
                 primaryAction: {
                   label: 'Start Again',
                   onClick: () => void handleStartAgain()
@@ -2067,6 +2043,8 @@ export default function TrainerPage() {
                 badgeClassName='mode-pill-ai'
                 round={lastRound}
                 saveStatus={getSaveStatusMessage(lastRound)}
+                retryAction={lastRound?.saveState === 'error' && lastRound?.sessionId
+                  ? { label: 'Retry save', onClick: () => void retryRoundSave() } : null}
                 primaryAction={{ label: 'Start Again', onClick: () => void handleStartAgain() }}
                 secondaryAction={{
                   label: 'Change round setup',

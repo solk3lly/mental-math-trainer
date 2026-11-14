@@ -6,6 +6,7 @@ const SESSION_STORE = 'sessions';
 const ATTEMPT_STORE = 'attempts';
 const ACCOUNT_QUEUE_STORE = 'accountQueue';
 const DAY_MS = 24 * 60 * 60 * 1000;
+const LOCKED_GUEST_INACTIVITY_MS = 5 * 60 * 1000;
 export const DEVICE_HISTORY_DAYS = 90;
 export const DEVICE_HISTORY_SESSION_LIMIT = 100;
 export const DEVICE_HISTORY_ATTEMPT_LIMIT = 10000;
@@ -211,16 +212,15 @@ export async function touchGuestSession(sessionId) {
   await done;
 }
 
-export async function recoverInterruptedGuestSessions() {
-  if (!canCoordinateGuestSessions()) return pruneGuestHistory();
+async function recoverAbandonedGuestSessions() {
   const live = await liveGuestSessions();
   const database = await openDatabase();
   const transaction = database.transaction(SESSION_STORE, 'readwrite');
   const done = transactionComplete(transaction);
   const sessions = transaction.objectStore(SESSION_STORE);
   const all = await requestResult(sessions.getAll());
-  // A generous lease avoids treating a backgrounded practice tab as abandoned.
-  const cutoff = Date.now() - 5 * 60 * 1000;
+  // Without cross-tab locks, give a suspended tab a day to resume its heartbeat.
+  const cutoff = Date.now() - (canCoordinateGuestSessions() ? LOCKED_GUEST_INACTIVITY_MS : DAY_MS);
   for (const session of all) {
     if (isAbandonedGuestSession(session, live, cutoff)) {
       if (session.attemptCount === 0) sessions.delete(session.id);
@@ -228,6 +228,10 @@ export async function recoverInterruptedGuestSessions() {
     }
   }
   await done;
+}
+
+export async function recoverInterruptedGuestSessions() {
+  await recoverAbandonedGuestSessions();
   await pruneGuestHistory();
 }
 
@@ -296,12 +300,16 @@ export async function pruneGuestHistory() {
 }
 
 export async function clearGuestHistory() {
+  await recoverAbandonedGuestSessions();
+  const live = await liveGuestSessions();
   const database = await openDatabase();
   const transaction = database.transaction(SESSION_STORE, 'readonly');
   const done = transactionComplete(transaction);
   const all = await requestResult(transaction.objectStore(SESSION_STORE).getAll());
   await done;
-  await deleteSessions(all.filter((session) => session.owner === 'guest' && session.state !== 'active').map((session) => session.id));
+  await deleteSessions(all.filter((session) =>
+    session.owner === 'guest' && session.state !== 'active' && !live.has(session.id)
+  ).map((session) => session.id));
 }
 
 export async function markGuestSessionImported(sessionId, userId) {
@@ -369,13 +377,35 @@ export async function acknowledgeAccountProgressRows(rows) {
   await done;
 }
 
-export async function getPendingAccountProgressRows(userId) {
+async function getAccountQueueEntries(userId) {
   const database = await openDatabase();
   const transaction = database.transaction(ACCOUNT_QUEUE_STORE, 'readonly');
   const done = transactionComplete(transaction);
   const entries = await requestResult(transaction.objectStore(ACCOUNT_QUEUE_STORE).index('userId').getAll(userId));
   await done;
-  return entries.map((entry) => entry.row);
+  return entries;
+}
+
+export async function getPendingAccountProgressRows(userId, { includeRejected = false } = {}) {
+  const entries = await getAccountQueueEntries(userId);
+  return entries.filter(entry => includeRejected || !entry.rejected).map(entry => entry.row);
+}
+
+export async function countRejectedAccountProgressRows(userId) {
+  const entries = await getAccountQueueEntries(userId);
+  return entries.filter(entry => entry.rejected).length;
+}
+
+export async function rejectAccountProgressRow(row) {
+  const database = await openDatabase();
+  const transaction = database.transaction(ACCOUNT_QUEUE_STORE, 'readwrite');
+  const done = transactionComplete(transaction);
+  const queue = transaction.objectStore(ACCOUNT_QUEUE_STORE);
+  const existing = await requestResult(queue.get(accountRowKey(row)));
+  if (existing && String(existing.row.reset_generation ?? 0) === String(row.reset_generation ?? 0)) {
+    queue.put({ ...existing, rejected: true });
+  }
+  await done;
 }
 
 export async function clearPendingAccountProgressRows(userId, generation) {

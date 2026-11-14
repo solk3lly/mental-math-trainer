@@ -47,7 +47,8 @@ test.after(() => database.close());
 
 test('signed-in import offers recover abandoned rounds but exclude live and other-owner rounds', async () => {
   await session('abandoned', 'active');
-  await updateSession('abandoned', { updatedAt: new Date(Date.now() - 600000).toISOString() });
+  (await import('../utils/guestSessionLocks.js')).releaseGuestSession('abandoned');
+  await updateSession('abandoned', { updatedAt: new Date(Date.now() - 2 * 86400000).toISOString() });
   await session('live', 'active');
   await session('claimed');
   await storage.claimGuestSessionImport('claimed', 'other-account');
@@ -55,6 +56,26 @@ test('signed-in import offers recover abandoned rounds but exclude live and othe
   assert.deepEqual(offer.sessions.map(entry => entry.id), ['abandoned']);
   assert.equal(offer.sessions[0].state, 'interrupted');
   assert.deepEqual(offer.attempts.map(entry => entry.sessionId), ['abandoned']);
+});
+
+test('clear recovers abandoned sessions without Web Locks and preserves a live and a recent session', async () => {
+  const { releaseGuestSession } = await import('../utils/guestSessionLocks.js');
+  const staleTime = new Date(Date.now() - 2 * 86400000).toISOString();
+  await session('abandoned', 'active');
+  releaseGuestSession('abandoned');
+  await updateSession('abandoned', { updatedAt: staleTime });
+  await session('still-live', 'active');
+  await updateSession('still-live', { updatedAt: staleTime });
+  await session('recent', 'active');
+  releaseGuestSession('recent');
+
+  try {
+    await storage.clearGuestHistory();
+    assert.deepEqual((await all('sessions')).map(entry => entry.id), ['recent', 'still-live']);
+    assert.deepEqual((await all('attempts')).map(entry => entry.sessionId), ['recent', 'still-live']);
+  } finally {
+    releaseGuestSession('still-live');
+  }
 });
 
 test('successful import retires answer payloads without allowing reimport to another account', async () => {
@@ -65,6 +86,21 @@ test('successful import retires answer payloads without allowing reimport to ano
   assert.equal((await all('sessions'))[0].importedTo, 'account-a');
   await assert.rejects(storage.claimGuestSessionImport('imported', 'account-b'));
   assert.equal((await storage.getGuestHistory()).sessions.length, 0);
+});
+
+test('a rejected account answer stays on disk until retried or reset', async () => {
+  const rejected = { user_id: 'account-a', session_id: 'round-a', question_index: 1, reset_generation: '0' };
+  const valid = { ...rejected, question_index: 2 };
+  const other = { ...rejected, user_id: 'account-b' };
+  for (const row of [rejected, valid, other]) await storage.queueAccountProgressRow(row);
+  await storage.rejectAccountProgressRow(rejected);
+  assert.deepEqual(await storage.getPendingAccountProgressRows('account-a'), [valid]);
+  assert.deepEqual(await storage.getPendingAccountProgressRows('account-a', { includeRejected: true }), [rejected, valid]);
+  assert.deepEqual(await storage.getPendingAccountProgressRows('account-b'), [other]);
+  assert.equal(await storage.countRejectedAccountProgressRows('account-a'), 1);
+  await storage.clearPendingAccountProgressRows('account-a', '1');
+  assert.equal(await storage.countRejectedAccountProgressRows('account-a'), 0);
+  assert.deepEqual(await storage.getPendingAccountProgressRows('account-b'), [other]);
 });
 
 test('retention removes expired imported sessions and legacy imported payloads', async () => {
