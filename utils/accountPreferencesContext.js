@@ -23,6 +23,7 @@ import {
   subscribeToAccountPreferenceChanges
 } from './accountPreferenceSync.js';
 import { useSupabaseAuth } from './supabaseAuthContext.js';
+import { changedPreferenceFields, insertInitialPreferences, mergePreferenceChanges, persistPreferencePatch } from './preferenceWrites.js';
 
 const defaultPreferences = createDefaultAccountPreferences();
 
@@ -142,11 +143,8 @@ export function AccountPreferencesProvider({ children }) {
 
       const guestPreferences = readGuestAccountPreferencesWithThemeRollout();
       const guestRow = buildUserPreferencesRow(userId, guestPreferences);
-      const { data: createdRow, error: createError } = await client
-        .from(USER_PREFERENCES_TABLE)
-        .upsert(guestRow, { onConflict: 'user_id' })
-        .select(USER_PREFERENCES_COLUMNS)
-        .single();
+      const { data: createdRow, error: createError } = await insertInitialPreferences(
+        client, USER_PREFERENCES_TABLE, guestRow, USER_PREFERENCES_COLUMNS);
 
       if (!isMounted) {
         return;
@@ -191,18 +189,16 @@ export function AccountPreferencesProvider({ children }) {
         scope.pending = null;
         scope.inFlight = true;
 
-        const { data, error } = await client
-          .from(USER_PREFERENCES_TABLE)
-          .upsert(snapshot, {
-            onConflict: 'user_id'
-          })
-          .select(USER_PREFERENCES_COLUMNS)
-          .single();
+        const { data, error } = await persistPreferencePatch(client, {
+          table: USER_PREFERENCES_TABLE, columns: USER_PREFERENCES_COLUMNS,
+          userId, patch: snapshot,
+          initialRow: buildUserPreferencesRow(userId, latestPreferencesRef.current)
+        });
 
         scope.inFlight = false;
         if (saveScopeRef.current !== scope) return;
         if (error) {
-          scope.pending = scope.pending || snapshot;
+          scope.pending = { ...snapshot, ...scope.pending };
           throw error;
         }
         if (data) applySyncedPreferences(data);
@@ -226,17 +222,20 @@ export function AccountPreferencesProvider({ children }) {
         latestPreferencesRef.current,
         patch
       );
+      const changes = changedPreferenceFields(
+        buildUserPreferencesRow(userId, latestPreferencesRef.current),
+        buildUserPreferencesRow(userId, nextPreferences)
+      );
 
       latestPreferencesRef.current = nextPreferences;
       setPreferences(nextPreferences);
 
       if (!client || !userId) {
-        writeGuestAccountPreferences(nextPreferences);
-        return { error: null };
+        const saved = writeGuestAccountPreferences(nextPreferences);
+        return { error: saved ? null : new Error('Settings changed for now. This browser could not save them.') };
       }
 
-      const nextRow = buildUserPreferencesRow(userId, nextPreferences);
-      scope.pending = nextRow;
+      scope.pending = mergePreferenceChanges(scope.pending, changes);
 
       try {
         await flushPendingPreferences();

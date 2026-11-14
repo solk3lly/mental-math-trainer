@@ -1,9 +1,8 @@
 import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import PageIntro from 'components/PageIntro.js';
-import { storeAuthLoginHandoff } from 'utils/authLoginHandoff.js';
 import { useSupabaseAuth } from 'utils/supabaseAuthContext.js';
 import {
   calculateStrength,
@@ -20,19 +19,11 @@ const PASSWORD_RULES = [
   { key: 'minLength', label: 'Has at least 8 characters' }
 ];
 
-function isDuplicateSignUpResponse({ data, error }) {
-  const duplicateErrorPattern = /already\s*(registered|exists)|already\s*been\s*registered/i;
-  const hasDuplicateError = Boolean(error?.message && duplicateErrorPattern.test(error.message));
-
-  const identities = data?.user?.identities;
-  const hasDuplicateIdentityPattern =
-    !error &&
-    !data?.session &&
-    Boolean(data?.user?.email) &&
-    Array.isArray(identities) &&
-    identities.length === 0;
-
-  return hasDuplicateError || hasDuplicateIdentityPattern;
+function signupRequestError(error) {
+  if (!error || /already\s*(registered|exists)|already\s*been\s*registered/i.test(error.message)) return '';
+  return error.status === 429
+    ? 'Too many requests. Wait a little and try again.'
+    : 'Could not process this request right now. Please try again.';
 }
 
 export default function SignupPage() {
@@ -46,7 +37,6 @@ export default function SignupPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
-  const [duplicateEmail, setDuplicateEmail] = useState('');
 
   useEffect(() => {
     if (user) {
@@ -84,7 +74,6 @@ export default function SignupPage() {
     setIsSubmitting(true);
     setErrorMessage('');
     setSuccessMessage('');
-    setDuplicateEmail('');
 
     const response = await client.auth.signUp({
       email: email.trim(),
@@ -97,32 +86,21 @@ export default function SignupPage() {
 
     setIsSubmitting(false);
 
-    if (isDuplicateSignUpResponse(response)) {
-      setDuplicateEmail(email.trim());
-      setErrorMessage('');
-      setSuccessMessage('This email is already registered. Do you want to log in instead?');
+    const requestError = signupRequestError(response.error);
+    if (requestError) {
+      setErrorMessage(requestError);
       return;
     }
 
-    if (response.error) {
-      setErrorMessage(response.error.message);
-      return;
-    }
-
-    if (response.data.session) {
+    if (response.data?.session) {
       await router.push('/');
       return;
     }
 
     setSuccessMessage(
-      'Account created. Check your inbox to confirm your email. The link will bring you back to the verification page and sign you in automatically.'
+      'Check your inbox for any confirmation steps. If you already have an account, log in or request a password reset.'
     );
   };
-
-  const handleDuplicateLoginClick = useCallback(async () => {
-    storeAuthLoginHandoff(duplicateEmail || email);
-    await router.push('/login');
-  }, [duplicateEmail, email, router]);
 
   return (
     <>
@@ -155,7 +133,6 @@ export default function SignupPage() {
               value={email}
               onChange={(event) => {
                 setEmail(event.target.value);
-                setDuplicateEmail('');
                 setErrorMessage('');
                 setSuccessMessage('');
               }}
@@ -264,24 +241,13 @@ export default function SignupPage() {
           {errorMessage && <p className='feedback warning' role='alert'>{errorMessage}</p>}
           {successMessage && <p className='feedback success'>{successMessage}</p>}
 
-          {duplicateEmail && (
-            <div className='inline-actions'>
-              <button
-                type='button'
-                className='button button-quiet'
-                onClick={() => void handleDuplicateLoginClick()}
-              >
-                Log in with this email
-              </button>
-            </div>
-          )}
-
           <p className='auth-helper'>
             Already have an account?{' '}
             <Link href='/login' className='text-link'>
               Log in
             </Link>
           </p>
+          <p className='auth-helper'><Link href='/forgot-password' className='text-link'>Reset password</Link></p>
           {!isConfigured && <Link href='/' className='text-link'>Practice as a guest</Link>}
         </section>
       </div>

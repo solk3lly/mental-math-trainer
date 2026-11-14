@@ -14,20 +14,17 @@ import PlayCircleIcon from 'images/phosphor/play-circle-bold.svg';
 import SquaresFourIcon from 'images/phosphor/squares-four.svg';
 import { useActiveSession } from 'utils/activeSessionContext.js';
 import {
-  createMixedProblem,
   DIFFICULTY_LEVELS,
   getEnabledOperations,
-  getDifficultyForOperation,
   MIXED_OPERATION_META,
   MIXED_OPERATIONS,
-  pickRandomOperation,
   RUN_LENGTHS,
   sanitizeMixedSettings
 } from 'utils/mixedDifficulty.js';
 import { MixedTrainerProvider, useMixedTrainer } from 'utils/mixedTrainerContext.js';
 import {
   buildMixedProgressLogRow,
-  createMixedActiveRound,
+  startMixedRound,
   processMixedRoundSubmission,
   shouldAutoSubmitAnswer
 } from 'utils/mixedTrainerRound.js';
@@ -44,6 +41,8 @@ import {
   formatHotkeyLabel,
   isShortcutEventEligible
 } from 'utils/hotkeys.js';
+import { assertProgressRoundCurrent } from 'utils/progressWriteCoordinator.js';
+import useAccountProgressRound from 'utils/useAccountProgressRound.js';
 import { getSupabaseRestConfig } from 'utils/supabaseClient.js';
 import { finishGuestSession, recordGuestAttempt, startGuestSession, touchGuestSession } from 'utils/progressStorage.js';
 import { useSupabaseAuth } from 'utils/supabaseAuthContext.js';
@@ -178,6 +177,7 @@ function MixedTrainerContent() {
   const guestSaveErrorRef = useRef(null);
   const terminateSessionRef = useRef(async () => ({ handled: false }));
   const userId = user?.id ?? null;
+  const prepareRound = useAccountProgressRound(userId, clientRef);
   const previousUserIdRef = useRef(userId);
   const progressBuffer = useMemo(
     () =>
@@ -360,6 +360,7 @@ function MixedTrainerContent() {
       }
 
       try {
+        assertProgressRoundCurrent(finishingRound, userId);
         await persistQueuedProgress({ keepalive });
         markSummarySaved(finishingSessionId);
         return { saved: true, error: null };
@@ -513,42 +514,40 @@ function MixedTrainerContent() {
     closeEndDialog(!result.error);
   }, [closeEndDialog, isEndingRound, terminateActiveRound]);
 
-  const beginRound = useCallback(() => {
+  const beginRound = useCallback(async function beginMixedRound() {
     if (isLoadingMixedSettings || !canStart) {
       return;
     }
 
-    pendingAdvanceRef.current = null;
+    return prepareRound(({ resetGeneration, writeGeneration }) => {
+      pendingAdvanceRef.current = null;
 
-    const sanitized = sanitizeMixedSettings(settings);
-    const enabled = getEnabledOperations(sanitized);
-    const firstOp = pickRandomOperation(enabled);
-    const firstDifficulty = getDifficultyForOperation(sanitized, firstOp);
-    const firstProblem = createMixedProblem(firstOp, firstDifficulty);
-    const questionStartedAt = Date.now();
-    const sessionId = createSessionId();
+      const sanitized = sanitizeMixedSettings(settings);
+      const sessionId = createSessionId();
+      const nextRound = startMixedRound(sanitized, { sessionId, resetGeneration, writeGeneration });
 
-    if (!userId) {
-      guestSaveErrorRef.current = null;
-      guestCheckpointRef.current = startGuestSession({
-        id: sessionId,
-        kind: 'mixed',
-        settings: sanitized,
-        requestedCount: sanitized.roundSize
-      }).catch((error) => {
-        guestSaveErrorRef.current = error;
-      });
-    }
+      if (!userId) {
+        guestSaveErrorRef.current = null;
+        guestCheckpointRef.current = startGuestSession({
+          id: sessionId,
+          kind: 'mixed',
+          settings: sanitized,
+          requestedCount: sanitized.roundSize
+        }).catch((error) => {
+          guestSaveErrorRef.current = error;
+        });
+      }
 
-    void upsertMixedSettings(sanitized);
-    setLastRound(null);
-    setAnswerInput('');
-    setSubmissionFeedbackState(MIXED_SUBMISSION_FEEDBACK_STATES.IDLE);
-    handledQuestionIdRef.current = null;
-    const nextRound = createMixedActiveRound(sanitized, firstProblem, questionStartedAt, sessionId);
-    activeRoundRef.current = nextRound;
-    setActiveRound(nextRound);
-  }, [canStart, isLoadingMixedSettings, settings, upsertMixedSettings, userId]);
+      void upsertMixedSettings(sanitized);
+      setLastRound(null);
+      setAnswerInput('');
+      setSubmissionFeedbackState(MIXED_SUBMISSION_FEEDBACK_STATES.IDLE);
+      handledQuestionIdRef.current = null;
+      activeRoundRef.current = nextRound;
+      setActiveRound(nextRound);
+    }, error => setLastRound({ ...createRoundSummary([], settings, userId, false, null),
+      saveState: 'error', saveError: error.message }));
+  }, [canStart, isLoadingMixedSettings, prepareRound, settings, upsertMixedSettings, userId]);
 
   const startRound = useCallback(
     (event) => {
@@ -710,14 +709,15 @@ function MixedTrainerContent() {
       handledQuestionIdRef.current = submission.handledQuestionId;
 
       if (userId) {
-        progressBuffer.enqueue(
-          buildMixedProgressLogRow(
+        progressBuffer.enqueue({
+          ...buildMixedProgressLogRow(
             submission.attempt,
             userId,
             roundSnapshot.sessionId,
             submission.attempts.length
-          )
-        );
+          ),
+          reset_generation: roundSnapshot.resetGeneration
+        });
       } else {
         const row = buildMixedProgressLogRow(
           submission.attempt,
@@ -819,12 +819,9 @@ function MixedTrainerContent() {
         return;
       }
 
-      const pastedDigits = event.clipboardData?.getData('text')?.replace(/\D+/g, '') ?? '';
-      if (!pastedDigits) {
-        return;
-      }
-
+      const pastedDigits = event.clipboardData?.getData('text')?.trim() ?? '';
       event.preventDefault();
+      if (parseIntegerInput(pastedDigits) === null) return;
       processInput(pastedDigits);
     },
     [isDesktopMixedInput, isSubmissionFeedbackActive, processInput]

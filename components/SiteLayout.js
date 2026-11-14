@@ -29,6 +29,8 @@ import {
   THEME_OPTIONS
 } from 'utils/themes.js';
 import { useResolvedDisplayMode } from 'utils/useResolvedDisplayMode.js';
+import { useLetterShortcuts } from 'utils/useLetterShortcuts.js';
+import { installRoundNavigation } from 'utils/roundNavigation.js';
 
 export default function SiteLayout({ children }) {
   const router = useRouter();
@@ -37,11 +39,14 @@ export default function SiteLayout({ children }) {
   const { themeKey, displayMode, interfaceStyle, isLoadingPreferences, upsertPreferences } =
     useAccountPreferences();
   const [isUtilityDrawerOpen, setIsUtilityDrawerOpen] = useState(false);
+  const [letterShortcutsEnabled, changeLetterShortcuts] = useLetterShortcuts();
   const utilityButtonRef = useRef(null);
   const utilityCloseButtonRef = useRef(null);
   const utilityDrawerRef = useRef(null);
   const wasUtilityDrawerOpenRef = useRef(false);
   const mobileMenuRef = useRef(null);
+  const navigationRef = useRef(null);
+  navigationRef.current = { hasActiveSession, requestActiveSessionExit };
 
   const closeUtilityDrawer = useCallback(() => {
     setIsUtilityDrawerOpen(false);
@@ -342,21 +347,16 @@ export default function SiteLayout({ children }) {
   }, [closeUtilityDrawer, hasActiveSession, requestActiveSessionExit, router]);
 
   useEffect(() => {
-    if (!hasActiveSession) return undefined;
-    const currentTitle = router.pathname === '/mixed'
-      ? 'Mixed Trainer - Mental Math Studio' : 'Mental Math Studio';
-    router.beforePopState(({ as }) => {
-      const current = router.asPath;
-      window.history.pushState({ ...window.history.state, as: current, url: current }, '', current);
-      closeUtilityDrawer();
-      void requestActiveSessionExit('history').then((confirmed) => {
-        if (confirmed) void router.push(as);
-        else document.title = currentTitle;
-      });
-      return false;
+    if (typeof window === 'undefined') return undefined;
+    return installRoundNavigation({
+      history: window.history, router,
+      isActive: () => navigationRef.current.hasActiveSession,
+      requestExit: () => {
+        closeUtilityDrawer();
+        return navigationRef.current.requestActiveSessionExit('history');
+      }
     });
-    return () => router.beforePopState(() => true);
-  }, [closeUtilityDrawer, hasActiveSession, requestActiveSessionExit, router]);
+  }, [closeUtilityDrawer, router]);
 
   const handleThemeChange = useCallback(
     (nextThemeKey) => upsertPreferences({ themeKey: nextThemeKey }),
@@ -411,7 +411,7 @@ export default function SiteLayout({ children }) {
     };
 
     const handleGlobalShortcut = (event) => {
-      if (!isShortcutEventEligible(event)) {
+      if (!letterShortcutsEnabled || !isShortcutEventEligible(event)) {
         return;
       }
 
@@ -454,7 +454,7 @@ export default function SiteLayout({ children }) {
 
     window.addEventListener('keydown', handleGlobalShortcut);
     return () => window.removeEventListener('keydown', handleGlobalShortcut);
-  }, [closeUtilityDrawer, cycleTheme, handleSignOut, requestActiveSessionExit, router, user]);
+  }, [closeUtilityDrawer, cycleTheme, handleSignOut, letterShortcutsEnabled, requestActiveSessionExit, router, user]);
 
   useEffect(() => {
     if (typeof document === 'undefined') {
@@ -662,6 +662,8 @@ export default function SiteLayout({ children }) {
             onClick={closeUtilityDrawer}
           />
           <CommandDesk
+            letterShortcutsEnabled={letterShortcutsEnabled}
+            onLetterShortcutsChange={changeLetterShortcuts}
             activeTheme={activeTheme}
             closeButtonRef={utilityCloseButtonRef}
             displayMode={displayMode}

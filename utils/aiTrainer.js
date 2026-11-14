@@ -1,3 +1,4 @@
+import { copyActiveRound } from './roundHistory.js';
 import { solveAiExpression } from './aiMath.js';
 import { PRACTICE_MODES, parseTrainerAnswer } from './mathEngine.js';
 import { processRoundSubmission } from './trainerRound.js';
@@ -87,6 +88,10 @@ export function solveTrainerProblem(
   };
 }
 
+function isFinishedSubmission(submission) {
+  return submission.isComplete || Boolean(submission.generationError);
+}
+
 export function advanceAiTrainerRound(
   activeRound,
   handledQuestionId = null,
@@ -124,7 +129,7 @@ export function advanceAiTrainerRound(
       return {
         handledQuestionId: nextHandledQuestionId,
         isComplete: false,
-        attempts: workingRound.attempts,
+        get attempts() { return workingRound.attempts; },
         nextActiveRound: workingRound,
         solvedSteps
       };
@@ -137,26 +142,26 @@ export function advanceAiTrainerRound(
       submission
     });
 
-    if (submission.isComplete) {
+    if (isFinishedSubmission(submission)) {
       return {
         handledQuestionId: nextHandledQuestionId,
         isComplete: true,
+        generationError: submission.generationError,
         attempts: submission.attempts,
         nextActiveRound: null,
         solvedSteps
       };
     }
 
-    workingRound = {
-      ...submission.nextActiveRound,
+    workingRound = copyActiveRound(submission.nextActiveRound, {
       sourceMode: TRAINER_INPUT_MODES.AI
-    };
+    });
   }
 
   return {
     handledQuestionId: nextHandledQuestionId,
     isComplete: false,
-    attempts: workingRound.attempts,
+    get attempts() { return workingRound.attempts; },
     nextActiveRound: workingRound,
     solvedSteps
   };

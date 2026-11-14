@@ -1,6 +1,5 @@
 import Head from 'next/head';
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
 import IconLabel from 'components/IconLabel.js';
 import PageIntro from 'components/PageIntro.js';
 import ArrowsClockwiseIcon from 'images/phosphor/arrows-clockwise.svg';
@@ -9,20 +8,15 @@ import FunctionIcon from 'images/phosphor/function.svg';
 import HouseIcon from 'images/phosphor/house.svg';
 import ListChecksIcon from 'images/phosphor/list-checks.svg';
 import TimerIcon from 'images/phosphor/timer.svg';
-import { AI_MODE_LOG_TABLE } from 'utils/aiModeLogs.js';
-import { persistProgressLogBatches } from 'utils/progressLogs.js';
 import { formatDuration } from 'utils/mathEngine.js';
 import {
-  createEmptyProgressDashboard,
-  buildGuestProgressDashboard,
-  fetchProgressDashboardData,
   getOperationDisplayLabel,
   PROGRESS_SOURCE_LABELS,
   RECENT_PROGRESS_WINDOW_DAYS
 } from 'utils/progressDashboard.js';
-import { acknowledgeAccountProgressRows, claimGuestSessionImport, clearGuestHistory, clearPendingAccountProgressRows, getGuestHistory, getGuestHistoryForImport, getPendingAccountProgressRows, markGuestSessionImported, recoverInterruptedGuestSessions, DEVICE_HISTORY_DAYS } from 'utils/progressStorage.js';
+import { DEVICE_HISTORY_DAYS } from 'utils/progressStorage.js';
 import { useSupabaseAuth } from 'utils/supabaseAuthContext.js';
-import { resetAccountProgress, withAccountProgressWrite } from 'utils/progressWriteCoordinator.js';
+import useProgressDashboard from 'utils/useProgressDashboard.js';
 
 function formatTimestamp(isoDate) {
   return new Intl.DateTimeFormat('en-US', {
@@ -34,181 +28,16 @@ function formatTimestamp(isoDate) {
 }
 
 export default function StatsPage() {
-  const { client, user, isConfigured, isLoading: isCheckingAccount, isAdmin } = useSupabaseAuth();
-  const userId = user?.id ?? null;
-  const [dashboardData, setDashboardData] = useState(createEmptyProgressDashboard);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isResetting, setIsResetting] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
-  const [importOffer, setImportOffer] = useState(null);
-  const [isImporting, setIsImporting] = useState(false);
-  const [importDismissed, setImportDismissed] = useState(false);
-  const loadSequenceRef = useRef(0);
-  const currentUserIdRef = useRef(userId);
-  currentUserIdRef.current = userId;
+  const auth = useSupabaseAuth();
+  return <StatsContent key={auth.user?.id || 'guest'} auth={auth} />;
+}
 
-  const replayAccountQueue = useCallback(async () => {
-    if (!client || !userId) return;
-    return withAccountProgressWrite(userId, async () => {
-      let pending;
-      try {
-        pending = await getPendingAccountProgressRows(userId);
-      } catch (_error) {
-        return;
-      }
-      for (let offset = 0; offset < pending.length; offset += 500) {
-        const { data, error } = await client.auth.getUser();
-        if (error || data?.user?.id !== userId || currentUserIdRef.current !== userId) {
-          throw new Error('Pending account progress was not synced because the account changed.');
-        }
-        const batch = pending.slice(offset, offset + 500);
-        await persistProgressLogBatches(client, batch, 500);
-        await acknowledgeAccountProgressRows(batch);
-      }
-    });
-  }, [client, userId]);
-
-  const loadLogs = useCallback(async () => {
-    const sequence = ++loadSequenceRef.current;
-    setIsLoading(true);
-    setErrorMessage('');
-
-    try {
-      if (!userId) await recoverInterruptedGuestSessions();
-      if (userId && client) await replayAccountQueue();
-      const nextDashboardData = userId && client
-        ? await fetchProgressDashboardData(client)
-        : buildGuestProgressDashboard(await getGuestHistory());
-      if (sequence !== loadSequenceRef.current) return;
-      setDashboardData(nextDashboardData);
-      setIsLoading(false);
-    } catch (error) {
-      if (sequence !== loadSequenceRef.current) return;
-      setDashboardData(createEmptyProgressDashboard());
-      setErrorMessage(error?.message || 'Could not load progress data.');
-      setIsLoading(false);
-    }
-  }, [client, replayAccountQueue, userId]);
-
-  useEffect(() => {
-    if (isCheckingAccount) return undefined;
-    void loadLogs();
-    return () => { loadSequenceRef.current += 1; };
-  }, [isCheckingAccount, loadLogs]);
-
-  useEffect(() => {
-    if (!userId) {
-      setImportOffer(null);
-      setImportDismissed(false);
-      return undefined;
-    }
-    let cancelled = false;
-    getGuestHistoryForImport(userId).then((history) => {
-      if (!cancelled) {
-        setImportOffer(history);
-      }
-    }).catch(() => { if (!cancelled) setImportOffer(null); });
-    return () => { cancelled = true; };
-  }, [userId]);
-
+function StatsContent({ auth }) {
+  const { user, isConfigured, isLoading: isCheckingAccount } = auth;
+  const { dashboardData, isLoading, isResetting, errorMessage, syncError, importOffer,
+    isImporting, importDismissed, setImportDismissed, loadLogs, handleClearGuestHistory,
+    handleImport, handleReset } = useProgressDashboard(auth);
   const { overview, operationBreakdown, recentSessions, recentAttempts } = dashboardData;
-
-  const handleClearGuestHistory = async () => {
-    if (!window.confirm('Clear saved device history? This does not change your theme or trainer settings.')) return;
-    setIsResetting(true);
-    try {
-      await clearGuestHistory();
-      await loadLogs();
-    } catch (error) {
-      setErrorMessage(error?.message || 'Could not clear device history.');
-    } finally {
-      setIsResetting(false);
-    }
-  };
-
-  const handleImport = async () => {
-    if (!client || !userId || !importOffer || isImporting) return;
-    const owner = userId;
-    setIsImporting(true);
-    setErrorMessage('');
-    const importWork = () => withAccountProgressWrite(owner, async () => {
-      for (const session of importOffer.sessions) {
-        const freshHistory = await getGuestHistory();
-        if (!freshHistory.sessions.some((entry) => entry.id === session.id && !entry.importedTo)) {
-          continue;
-        }
-        await claimGuestSessionImport(session.id, owner);
-        const source = freshHistory.attempts.filter((attempt) => attempt.sessionId === session.id)
-          .sort((a, b) => a.questionIndex - b.questionIndex);
-        for (let offset = 0; offset < source.length; offset += 500) {
-          const { data, error } = await client.auth.getUser();
-          if (error || data?.user?.id !== owner || currentUserIdRef.current !== owner) {
-            throw new Error('Import stopped because the account changed. Sign in to the original account and retry.');
-          }
-          const rows = source.slice(offset, offset + 500).map((attempt) => ({
-            ...attempt.row,
-            user_id: owner,
-            created_at: attempt.createdAt
-          }));
-          await persistProgressLogBatches(client, rows, 500);
-        }
-        if (currentUserIdRef.current !== owner) throw new Error('Import stopped because the account changed.');
-        await markGuestSessionImported(session.id, owner);
-      }
-    });
-    try {
-      if (navigator.locks?.request) {
-        await navigator.locks.request('mental-math-guest-import', importWork);
-      } else {
-        await importWork();
-      }
-      setImportOffer(null);
-      await loadLogs();
-    } catch (error) {
-      setErrorMessage(error?.message || 'Import failed. Device history is still available to retry.');
-    } finally {
-      setIsImporting(false);
-    }
-  };
-
-  const handleReset = async () => {
-    if (!client || !userId || isResetting || isImporting || isLoading) {
-      return;
-    }
-
-    const shouldReset = window.confirm(
-      'Delete all stored progress logs for your account? This cannot be undone.'
-    );
-    if (!shouldReset) {
-      return;
-    }
-
-    setIsResetting(true);
-    setErrorMessage('');
-
-    try {
-      await resetAccountProgress(userId, async () => {
-        if (currentUserIdRef.current !== userId) throw new Error('Reset stopped because the account changed.');
-        await clearPendingAccountProgressRows(userId);
-        const [manualResponse, aiResponse] = await Promise.all([
-          client.from('progress_logs').delete().eq('user_id', userId),
-          isAdmin
-            ? client.from(AI_MODE_LOG_TABLE).delete().eq('user_id', userId)
-            : Promise.resolve({ error: null })
-        ]);
-        const resetError = manualResponse.error || aiResponse.error;
-        if (resetError) throw resetError;
-      });
-      if (currentUserIdRef.current === userId) {
-        loadSequenceRef.current += 1;
-        setDashboardData(createEmptyProgressDashboard());
-      }
-    } catch (error) {
-      if (currentUserIdRef.current === userId) setErrorMessage(error?.message || 'Could not reset account progress.');
-    } finally {
-      setIsResetting(false);
-    }
-  };
 
   return (
     <>
@@ -258,6 +87,8 @@ export default function StatsPage() {
               {isResetting ? 'Clearing...' : user ? 'Reset account progress' : 'Clear device history'}
             </button>
           </section>
+
+          {syncError && <p className='feedback warning' role='status'>{syncError}</p>}
 
           {!user && !isLoading && !errorMessage && (
             <p className='save-status'>Saved on this device · Last {DEVICE_HISTORY_DAYS} days, up to 100 sessions or 10,000 attempts. Clearing browser data removes this history. {isConfigured && <Link href='/login' className='text-link'>Log in to sync it</Link>}</p>

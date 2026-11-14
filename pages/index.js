@@ -18,7 +18,6 @@ import {
   buildAiCycleBlueprints,
   formatAiCycleBlueprintLabel
 } from 'utils/aiCycle.js';
-import { solveAiExpression } from 'utils/aiMath.js';
 import {
   buildAiModeCustomLogRow,
   buildAiModeTrainerLogRow,
@@ -54,8 +53,11 @@ import {
 } from 'utils/hotkeys.js';
 import { getSupabaseRestConfig } from 'utils/supabaseClient.js';
 import { finishGuestSession, recordGuestAttempt, startGuestSession, touchGuestSession } from 'utils/progressStorage.js';
+import { copyActiveRound, getActiveRoundStats } from 'utils/roundHistory.js';
+import { solveCalculatorExpression } from 'utils/aiCalculator.js';
 import { useSupabaseAuth } from 'utils/supabaseAuthContext.js';
-import { withAccountProgressWrite } from 'utils/progressWriteCoordinator.js';
+import useAccountProgressRound from 'utils/useAccountProgressRound.js';
+import { assertProgressRoundCurrent, getAccountProgressGeneration, withAccountProgressWrite } from 'utils/progressWriteCoordinator.js';
 import {
   TRAINER_COMPLETION_STATES,
   TRAINER_FINISH_VIEWS,
@@ -118,6 +120,7 @@ function createRoundSummary(
       meta.completionState || TRAINER_COMPLETION_STATES.COMPLETED,
     aiAutoCycle: Boolean(meta.aiAutoCycle),
     blueprintLabel: meta.blueprintLabel || '',
+    generationError: meta.generationError,
     finishedAt: new Date().toISOString(),
     wasTerminated,
     saveState: 'saving',
@@ -157,6 +160,16 @@ function getSaveStatusMessage(lastRound) {
   }
 
   return '';
+}
+
+function calculatorRequestError(isAdmin, expression) {
+  if (!isAdmin) return 'AI MODE is available only to signed-in admin accounts.';
+  if (!expression) return 'Enter a mathematical expression to solve.';
+  return '';
+}
+
+function calculatorErrorMessage(error) {
+  return error?.message || 'The expression could not be solved.';
 }
 
 const DEFAULT_SOLVER_STATE = Object.freeze({
@@ -202,11 +215,15 @@ export default function TrainerPage() {
   const resolveExitRef = useRef(null);
   const dialogStartedAtRef = useRef(0);
   const terminateSessionRef = useRef(async () => ({ handled: false }));
+  const calculatorAbortRef = useRef(null);
   const aiSolveLockRef = useRef(false);
   const aiAutoCycleEnabledRef = useRef(aiAutoCycleEnabled);
   const aiCycleStopRequestedRef = useRef(aiCycleStopRequested);
   const aiCycleBlueprintsRef = useRef(aiCycleBlueprints);
   const userId = user?.id ?? null;
+  const currentUserIdRef = useRef(userId);
+  currentUserIdRef.current = userId;
+  const prepareRound = useAccountProgressRound(userId, clientRef);
   const previousUserIdRef = useRef(userId);
   const isAiMode = isAdmin && trainerInputMode === TRAINER_INPUT_MODES.AI;
 
@@ -234,6 +251,7 @@ export default function TrainerPage() {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      calculatorAbortRef.current?.abort();
       progressBuffer.dispose();
       aiModeBuffer.dispose();
     };
@@ -306,6 +324,7 @@ export default function TrainerPage() {
     setActiveRound(null);
     setAnswerInput('');
     setLastRound(null);
+    calculatorAbortRef.current?.abort();
     setCustomExpression('');
     setCustomSolverState(DEFAULT_SOLVER_STATE);
     setAiAutoCycleEnabled(false);
@@ -326,7 +345,7 @@ export default function TrainerPage() {
   }, [activeRound]);
 
   const activeStats = useMemo(
-    () => computeRoundStats(activeRound?.attempts || []),
+    () => getActiveRoundStats(activeRound),
     [activeRound]
   );
   const isDecimalPracticeMode = settings.practiceMode === PRACTICE_MODES.DECIMAL;
@@ -398,11 +417,13 @@ export default function TrainerPage() {
         keepalive = false,
         sourceMode = TRAINER_INPUT_MODES.MANUAL,
         aiAutoCycle = false,
-        blueprintLabel = ''
+        blueprintLabel = '',
+        generationError = null
       }
     ) => {
       handledQuestionIdRef.current = null;
-      const finishingSessionId = activeRoundRef.current?.sessionId;
+      const finishingRound = activeRoundRef.current;
+      const finishingSessionId = finishingRound?.sessionId;
       activeRoundRef.current = null;
       setActiveRound(null);
       setAnswerInput('');
@@ -416,7 +437,8 @@ export default function TrainerPage() {
         {
           sessionId: finishingSessionId,
           aiAutoCycle,
-          blueprintLabel
+          blueprintLabel,
+          ...(generationError ? { completionState: TRAINER_COMPLETION_STATES.ERROR, generationError: generationError.message } : {})
         }
       );
       if (isMountedRef.current) {
@@ -441,6 +463,7 @@ export default function TrainerPage() {
       }
 
       try {
+        assertProgressRoundCurrent(finishingRound, userId);
         if (sourceMode === TRAINER_INPUT_MODES.AI) {
           await persistQueuedAiModeLogs({ keepalive });
         } else {
@@ -478,7 +501,7 @@ export default function TrainerPage() {
       }
 
       const promise = (async () => {
-        if (!roundSnapshot.attempts.length) {
+        if (!getActiveRoundStats(roundSnapshot).total) {
           handledQuestionIdRef.current = null;
           activeRoundRef.current = null;
           if (isMountedRef.current) {
@@ -552,10 +575,9 @@ export default function TrainerPage() {
   const closeEndDialog = useCallback((confirmed) => {
     if (!confirmed && activeRoundRef.current) {
       const pausedMs = Date.now() - dialogStartedAtRef.current;
-      const nextRound = {
-        ...activeRoundRef.current,
+      const nextRound = copyActiveRound(activeRoundRef.current, {
         questionStartedAt: activeRoundRef.current.questionStartedAt + pausedMs
-      };
+      });
       activeRoundRef.current = nextRound;
       setActiveRound(nextRound);
       queueMicrotask(() => answerInputRef.current?.focus());
@@ -645,65 +667,60 @@ export default function TrainerPage() {
         return;
       }
 
-      if (activeRoundRef.current) {
-        await terminateActiveRound('restart');
-      }
-
       const sanitizedSettings = sanitizeSettings(roundSettings);
-      let firstProblem;
-      try {
-        firstProblem = createProblem(sanitizedSettings);
-      } catch (error) {
-        showRoundGenerationError(sanitizedSettings, sourceMode, error, {
-          aiAutoCycle: Boolean(aiAutoCycleRound),
-          blueprintLabel:
-            sourceMode === TRAINER_INPUT_MODES.AI
-              ? formatAiCycleBlueprintLabel(sanitizedSettings)
-              : '',
-          fallbackMessage: 'Unable to start this round.'
-        });
-        return;
-      }
-      const questionStartedAt = Date.now();
-      const sessionId = createSessionId();
+      return prepareRound(({ resetGeneration, writeGeneration }) => {
+        const firstProblem = createProblem(sanitizedSettings);
+        const questionStartedAt = Date.now();
+        const sessionId = createSessionId();
 
-      if (!userId && sourceMode === TRAINER_INPUT_MODES.MANUAL) {
-        guestSaveErrorRef.current = null;
-        guestCheckpointRef.current = startGuestSession({
-          id: sessionId,
-          kind: 'trainer',
-          settings: sanitizedSettings,
-          requestedCount: sanitizedSettings.roundSize
-        }).catch((error) => {
-          guestSaveErrorRef.current = error;
-        });
-      }
+        if (!userId && sourceMode === TRAINER_INPUT_MODES.MANUAL) {
+          guestSaveErrorRef.current = null;
+          guestCheckpointRef.current = startGuestSession({
+            id: sessionId,
+            kind: 'trainer',
+            settings: sanitizedSettings,
+            requestedCount: sanitizedSettings.roundSize
+          }).catch((error) => {
+            guestSaveErrorRef.current = error;
+          });
+        }
 
-      if (persistSettings) {
-        void upsertPreferences({ trainerSettings: sanitizedSettings });
-      }
+        if (persistSettings) {
+          void upsertPreferences({ trainerSettings: sanitizedSettings });
+        }
 
-      setRoundSizeDraft(String(sanitizedSettings.roundSize));
-      setLastRound(null);
-      setAiTransitionState(null);
-      setAnswerInput('');
-      handledQuestionIdRef.current = null;
-      const nextRound = {
-        ...createActiveRound(
-          sanitizedSettings,
-          firstProblem,
-          questionStartedAt,
-          sessionId
-        ),
-        sourceMode,
-        aiAutoCycleRound,
-        aiCycleCursor: nextCycleCursor
-      };
-      activeRoundRef.current = nextRound;
-      setActiveRound(nextRound);
+        setRoundSizeDraft(String(sanitizedSettings.roundSize));
+        setLastRound(null);
+        setAiTransitionState(null);
+        setAnswerInput('');
+        handledQuestionIdRef.current = null;
+        const nextRound = {
+          ...createActiveRound(
+            sanitizedSettings,
+            firstProblem,
+            questionStartedAt,
+            sessionId
+          ),
+          sourceMode,
+          resetGeneration,
+          writeGeneration,
+          aiAutoCycleRound,
+          aiCycleCursor: nextCycleCursor
+        };
+        activeRoundRef.current = nextRound;
+        setActiveRound(nextRound);
+      }, error => showRoundGenerationError(sanitizedSettings, sourceMode, error, {
+        aiAutoCycle: Boolean(aiAutoCycleRound),
+        blueprintLabel: sourceMode === TRAINER_INPUT_MODES.AI
+          ? formatAiCycleBlueprintLabel(sanitizedSettings) : '',
+        fallbackMessage: 'Unable to start this round.'
+      }), async () => {
+        if (activeRoundRef.current) await terminateActiveRound('restart');
+      });
     },
     [
       isLoadingPreferences,
+      prepareRound,
       showRoundGenerationError,
       terminateActiveRound,
       upsertPreferences,
@@ -773,7 +790,13 @@ export default function TrainerPage() {
     setAiTransitionState(null);
   }, []);
 
+  const cancelCustomSolve = useCallback(() => {
+    calculatorAbortRef.current?.abort();
+    setCustomSolverState(DEFAULT_SOLVER_STATE);
+  }, []);
+
   const handleCustomizeBlueprint = useCallback(() => {
+    cancelCustomSolve();
     setLastRound(null);
     setAiTransitionState(null);
     setAiAutoCycleEnabled(false);
@@ -782,7 +805,7 @@ export default function TrainerPage() {
     setAiCycleCursor(0);
     setCustomExpression('');
     setCustomSolverState(DEFAULT_SOLVER_STATE);
-  }, []);
+  }, [cancelCustomSolve]);
 
   const handleStartAgain = useCallback(async () => {
     if (!lastRound) {
@@ -946,34 +969,43 @@ export default function TrainerPage() {
       handledQuestionIdRef.current = submission.handledQuestionId;
 
       if (userId) {
-        progressBuffer.enqueue(
-          buildProgressLogRow(
+        progressBuffer.enqueue({
+          ...buildProgressLogRow(
             submission.attempt,
             roundSnapshot.settings,
             userId,
             roundSnapshot.sessionId,
-            submission.attempts.length
-          )
-        );
+            submission.attemptCount
+          ),
+          reset_generation: roundSnapshot.resetGeneration
+        });
       } else {
         const row = buildProgressLogRow(
           submission.attempt,
           roundSnapshot.settings,
           null,
           roundSnapshot.sessionId,
-          submission.attempts.length
+          submission.attemptCount
         );
         guestCheckpointRef.current = guestCheckpointRef.current.then(() =>
-          recordGuestAttempt(roundSnapshot.sessionId, submission.attempts.length, row)
+          recordGuestAttempt(roundSnapshot.sessionId, submission.attemptCount, row)
         ).catch((error) => {
           guestSaveErrorRef.current = error;
         });
       }
 
-      const { attempts, isComplete, nextActiveRound } = submission;
+      if (submission.generationError) {
+        activeRoundRef.current = submission.nextActiveRound;
+        await finalizeRound(submission.attempts, roundSnapshot.settings, {
+          wasTerminated: true, sourceMode: TRAINER_INPUT_MODES.MANUAL,
+          generationError: submission.generationError
+        });
+        return;
+      }
+      const { isComplete, nextActiveRound } = submission;
 
       if (isComplete) {
-        await finalizeRound(attempts, roundSnapshot.settings, {
+        await finalizeRound(submission.attempts, roundSnapshot.settings, {
           wasTerminated: false,
           sourceMode: TRAINER_INPUT_MODES.MANUAL
         });
@@ -981,10 +1013,9 @@ export default function TrainerPage() {
       }
 
       setAnswerInput('');
-      const nextRound = {
-        ...nextActiveRound,
+      const nextRound = copyActiveRound(nextActiveRound, {
         sourceMode: TRAINER_INPUT_MODES.MANUAL
-      };
+      });
       activeRoundRef.current = nextRound;
       setActiveRound(nextRound);
     },
@@ -1003,6 +1034,32 @@ export default function TrainerPage() {
     aiSolveLockRef.current = true;
     let isCancelled = false;
     let timeoutId = null;
+
+    function advanceAutoCycle(round) {
+      if (
+        round.aiAutoCycleRound &&
+        aiAutoCycleEnabledRef.current &&
+        !aiCycleStopRequestedRef.current &&
+        aiCycleBlueprintsRef.current.length
+      ) {
+        const nextIndex =
+          ((round.aiCycleCursor ?? 0) + 1) % aiCycleBlueprintsRef.current.length;
+
+        setAiCycleCursor(nextIndex);
+        setAiTransitionState({
+          startedAt: Date.now(),
+          durationMs: AI_AUTO_CYCLE_TRANSITION_MS,
+          nextIndex,
+          nextSettings: aiCycleBlueprintsRef.current[nextIndex],
+          nextBlueprintLabel: formatAiCycleBlueprintLabel(
+            aiCycleBlueprintsRef.current[nextIndex]
+          )
+        });
+      } else if (round.aiAutoCycleRound) {
+        setAiTransitionState(null);
+        setAiCycleStopRequested(false);
+      }
+    }
 
     const solveCurrentBatch = async () => {
       try {
@@ -1031,8 +1088,9 @@ export default function TrainerPage() {
                 step.solvedProblem,
                 userId,
                 roundSnapshot.sessionId,
-                step.submission.attempts.length,
-                step.submission.attempt.createdAt
+                step.submission.attemptCount,
+                step.submission.attempt.createdAt,
+                roundSnapshot.resetGeneration
               )
             );
           }
@@ -1040,35 +1098,14 @@ export default function TrainerPage() {
 
         if (batchResult.isComplete) {
           await finalizeRound(batchResult.attempts, roundSnapshot.settings, {
-            wasTerminated: false,
+            wasTerminated: Boolean(batchResult.generationError),
+            generationError: batchResult.generationError,
             sourceMode: TRAINER_INPUT_MODES.AI,
             aiAutoCycle: Boolean(roundSnapshot.aiAutoCycleRound),
             blueprintLabel: formatAiCycleBlueprintLabel(roundSnapshot.settings)
           });
 
-          if (
-            roundSnapshot.aiAutoCycleRound &&
-            aiAutoCycleEnabledRef.current &&
-            !aiCycleStopRequestedRef.current &&
-            aiCycleBlueprintsRef.current.length
-          ) {
-            const nextIndex =
-              ((roundSnapshot.aiCycleCursor ?? 0) + 1) % aiCycleBlueprintsRef.current.length;
-
-            setAiCycleCursor(nextIndex);
-            setAiTransitionState({
-              startedAt: Date.now(),
-              durationMs: AI_AUTO_CYCLE_TRANSITION_MS,
-              nextIndex,
-              nextSettings: aiCycleBlueprintsRef.current[nextIndex],
-              nextBlueprintLabel: formatAiCycleBlueprintLabel(
-                aiCycleBlueprintsRef.current[nextIndex]
-              )
-            });
-          } else if (roundSnapshot.aiAutoCycleRound) {
-            setAiTransitionState(null);
-            setAiCycleStopRequested(false);
-          }
+          if (!batchResult.generationError) advanceAutoCycle(roundSnapshot);
 
           return;
         }
@@ -1219,6 +1256,7 @@ export default function TrainerPage() {
       return;
     }
 
+    cancelCustomSolve();
     setTrainerInputMode(nextMode);
     setLastRound(null);
     setAiTransitionState(null);
@@ -1233,25 +1271,25 @@ export default function TrainerPage() {
   const handleCustomSolve = async (event) => {
     event.preventDefault();
 
-    if (!isAdmin || !userId || !clientRef.current) {
-      setCustomSolverState({
-        status: 'error',
-        error: 'AI MODE is available only to signed-in admin accounts.',
-        result: null
-      });
-      return;
-    }
-
     const promptText = customExpression.trim();
-    if (!promptText) {
-      setCustomSolverState({
-        status: 'error',
-        error: 'Enter a mathematical expression to solve.',
-        result: null
-      });
+    const requestError = calculatorRequestError(isAdmin, promptText);
+    if (requestError) {
+      setCustomSolverState({ status: 'error', error: requestError, result: null });
       return;
     }
 
+    calculatorAbortRef.current?.abort();
+    const calculation = new AbortController();
+    calculatorAbortRef.current = calculation;
+    function assertCalculationActive() {
+      if (currentUserIdRef.current !== userId) calculation.abort();
+      calculation.signal.throwIfAborted();
+    }
+    function showCalculationError(error) {
+      if (calculation.signal.aborted) return;
+      setCustomSolverState({ status: 'error',
+        error: calculatorErrorMessage(error), result: null });
+    }
     setCustomSolverState({
       status: 'working',
       error: '',
@@ -1259,8 +1297,12 @@ export default function TrainerPage() {
     });
 
     try {
+      const resetGeneration = await getAccountProgressGeneration(clientRef.current, userId);
+      assertCalculationActive();
+      const progressRound = { resetGeneration };
       const startedAt = getPerformanceNow();
-      const solvedExpression = solveAiExpression(promptText);
+      const solvedExpression = await solveCalculatorExpression(promptText, { signal: calculation.signal });
+      assertCalculationActive();
       const responseMs = Math.max(1, Math.round(getPerformanceNow() - startedAt));
       const persistedResult = {
         ...solvedExpression,
@@ -1268,26 +1310,30 @@ export default function TrainerPage() {
         promptText
       };
 
-      await withAccountProgressWrite(userId, () => persistAiModeLogBatches(clientRef.current, [
-        buildAiModeCustomLogRow(
-          persistedResult,
-          promptText,
-          userId,
-          createSessionId()
-        )
-      ]));
+      await withAccountProgressWrite(userId, () => {
+        assertProgressRoundCurrent(progressRound, userId);
+        return persistAiModeLogBatches(clientRef.current, [
+          buildAiModeCustomLogRow(
+            persistedResult,
+            promptText,
+            userId,
+            createSessionId(),
+            1,
+            new Date().toISOString(),
+            resetGeneration
+          )
+        ]);
+      }, null);
 
+      assertProgressRoundCurrent(progressRound, userId);
+      assertCalculationActive();
       setCustomSolverState({
         status: 'success',
         error: '',
         result: persistedResult
       });
     } catch (error) {
-      setCustomSolverState({
-        status: 'error',
-        error: error?.message || 'The expression could not be solved.',
-        result: null
-      });
+      showCalculationError(error);
     }
   };
 
@@ -1317,7 +1363,7 @@ export default function TrainerPage() {
     hasAdminControl: Boolean(user && isAdmin)
   });
   const activeAiQuestionLabel = activeRound
-    ? `Questions ${activeRound.attempts.length + 1} / ${activeRound.settings.roundSize}`
+    ? `Questions ${getActiveRoundStats(activeRound).total + 1} / ${activeRound.settings.roundSize}`
     : '';
 
   const renderAutoCycleToggle = () => (
@@ -1378,10 +1424,8 @@ export default function TrainerPage() {
             autoComplete='off'
             value={customExpression}
             onChange={(event) => {
+              cancelCustomSolve();
               setCustomExpression(event.target.value);
-              if (customSolverState.status !== 'idle') {
-                setCustomSolverState(DEFAULT_SOLVER_STATE);
-              }
             }}
             placeholder='sqrt(144) + log(100, 10)'
           />
@@ -1797,7 +1841,7 @@ export default function TrainerPage() {
                         The local solver is moving through the configured round automatically.
                       </p>
                       <ProgressBar
-                        current={activeRound.attempts.length}
+                        current={getActiveRoundStats(activeRound).total}
                         total={activeRound.settings.roundSize}
                         label={activeAiQuestionLabel}
                       />
@@ -1805,7 +1849,7 @@ export default function TrainerPage() {
                   ) : (
                     <div className='arena-problem-shell'>
                       <ProgressBar
-                        current={activeRound.attempts.length}
+                        current={getActiveRoundStats(activeRound).total}
                         total={activeRound.settings.roundSize}
                         secondaryLabel={`Correct so far: ${activeStats.correct}/${activeStats.total}`}
                       />
@@ -1869,10 +1913,8 @@ export default function TrainerPage() {
                         autoComplete='off'
                         value={customExpression}
                         onChange={(event) => {
+                          cancelCustomSolve();
                           setCustomExpression(event.target.value);
-                          if (customSolverState.status !== 'idle') {
-                            setCustomSolverState(DEFAULT_SOLVER_STATE);
-                          }
                         }}
                         placeholder='sqrt(144) + log(100, 10)'
                       />
@@ -2037,7 +2079,7 @@ export default function TrainerPage() {
             </section>
           )}
         {endDialogOpen && (
-          <EndRoundDialog count={activeRound?.attempts.length || 0}
+          <EndRoundDialog count={getActiveRoundStats(activeRound).total}
             isEnding={isEndingRound} onCancel={() => closeEndDialog(false)}
             onConfirm={() => void confirmEndRound()} />
         )}

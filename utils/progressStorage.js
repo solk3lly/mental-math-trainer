@@ -1,3 +1,5 @@
+import { canCoordinateGuestSessions, holdGuestSession, liveGuestSessions, releaseGuestSession } from './guestSessionLocks.js';
+
 const DATABASE_NAME = 'mental-math-device-history';
 const DATABASE_VERSION = 2;
 const SESSION_STORE = 'sessions';
@@ -9,7 +11,6 @@ export const DEVICE_HISTORY_SESSION_LIMIT = 100;
 export const DEVICE_HISTORY_ATTEMPT_LIMIT = 10000;
 
 let databasePromise;
-
 function requestResult(request) {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
@@ -30,8 +31,9 @@ function openDatabase() {
     return Promise.reject(new Error('Device history is unavailable in this browser.'));
   }
   if (!databasePromise) {
-    databasePromise = new Promise((resolve, reject) => {
+    const opening = new Promise((resolve, reject) => {
       const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
+      let blocked = false;
       request.onupgradeneeded = () => {
         const database = request.result;
         if (!database.objectStoreNames.contains(SESSION_STORE)) {
@@ -46,13 +48,31 @@ function openDatabase() {
           queue.createIndex('userId', 'userId', { unique: false });
         }
       };
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => {
+        const database = request.result;
+        if (blocked) {
+          database.close();
+          return;
+        }
+        database.onclose = () => {
+          if (databasePromise === opening) databasePromise = null;
+        };
+        database.onversionchange = () => {
+          database.close();
+          database.onclose();
+        };
+        resolve(database);
+      };
       request.onerror = () => reject(request.error || new Error('Could not open device history.'));
-      request.onblocked = () => reject(new Error('Close other open tabs and try again.'));
+      request.onblocked = () => {
+        blocked = true;
+        reject(new Error('Close other open tabs and try again.'));
+      };
     }).catch((error) => {
-      databasePromise = null;
+      if (databasePromise === opening) databasePromise = null;
       throw error;
     });
+    databasePromise = opening;
   }
   return databasePromise;
 }
@@ -67,25 +87,31 @@ function serializeValue(value) {
 }
 
 export async function startGuestSession({ id, kind, settings, requestedCount, startedAt = new Date().toISOString() }) {
-  const database = await openDatabase();
-  const transaction = database.transaction(SESSION_STORE, 'readwrite');
-  const done = transactionComplete(transaction);
-  const sessions = transaction.objectStore(SESSION_STORE);
-  const existing = await requestResult(sessions.get(id));
-  if (!existing) {
-    sessions.put({
-      id, owner: 'guest', kind, settings: serializeValue(settings), requestedCount,
-      startedAt, updatedAt: startedAt, endedAt: null, state: 'active', importedTo: null,
-      importOwnerId: null,
-      attemptCount: 0
-    });
-  } else if (existing.owner === 'guest' && !existing.importedTo) {
-    sessions.put({ ...existing, state: 'active', endedAt: null, updatedAt: new Date().toISOString() });
-  } else {
+  await holdGuestSession(id);
+  try {
+    const database = await openDatabase();
+    const transaction = database.transaction(SESSION_STORE, 'readwrite');
+    const done = transactionComplete(transaction);
+    const sessions = transaction.objectStore(SESSION_STORE);
+    const existing = await requestResult(sessions.get(id));
+    if (!existing) {
+      sessions.put({
+        id, owner: 'guest', kind, settings: serializeValue(settings), requestedCount,
+        startedAt, updatedAt: startedAt, endedAt: null, state: 'active', importedTo: null,
+        importOwnerId: null,
+        attemptCount: 0
+      });
+    } else if (isWritableGuestSession(existing)) {
+      sessions.put({ ...existing, state: 'active', endedAt: null, updatedAt: new Date().toISOString() });
+    } else {
+      await done;
+      throw new Error('This session can no longer be saved as guest history.');
+    }
     await done;
-    throw new Error('This session can no longer be saved as guest history.');
+  } catch (error) {
+    releaseGuestSession(id);
+    throw error;
   }
-  await done;
 }
 
 export async function recordGuestAttempt(sessionId, questionIndex, row) {
@@ -95,7 +121,7 @@ export async function recordGuestAttempt(sessionId, questionIndex, row) {
   const sessions = transaction.objectStore(SESSION_STORE);
   const attempts = transaction.objectStore(ATTEMPT_STORE);
   const session = await requestResult(sessions.get(sessionId));
-  if (!session || session.owner !== 'guest' || session.importedTo) {
+  if (!isWritableGuestSession(session)) {
     await done;
     throw new Error('This guest session is no longer available.');
   }
@@ -121,6 +147,8 @@ export async function recordGuestAttempt(sessionId, questionIndex, row) {
     });
     sessions.put({
       ...session,
+      state: 'active',
+      endedAt: null,
       attemptCount: session.attemptCount + 1,
       updatedAt: new Date().toISOString()
     });
@@ -129,20 +157,24 @@ export async function recordGuestAttempt(sessionId, questionIndex, row) {
 }
 
 export async function finishGuestSession(sessionId, state) {
-  const database = await openDatabase();
-  const transaction = database.transaction(SESSION_STORE, 'readwrite');
-  const done = transactionComplete(transaction);
-  const sessions = transaction.objectStore(SESSION_STORE);
-  const session = await requestResult(sessions.get(sessionId));
-  if (session) {
-    if (session.attemptCount === 0) {
-      sessions.delete(sessionId);
-    } else {
-      const endedAt = new Date().toISOString();
-      sessions.put({ ...session, state, endedAt, updatedAt: endedAt });
+  try {
+    const database = await openDatabase();
+    const transaction = database.transaction(SESSION_STORE, 'readwrite');
+    const done = transactionComplete(transaction);
+    const sessions = transaction.objectStore(SESSION_STORE);
+    const session = await requestResult(sessions.get(sessionId));
+    if (session) {
+      if (session.attemptCount === 0) {
+        sessions.delete(sessionId);
+      } else {
+        const endedAt = new Date().toISOString();
+        sessions.put({ ...session, state, endedAt, updatedAt: endedAt });
+      }
     }
+    await done;
+  } finally {
+    releaseGuestSession(sessionId);
   }
-  await done;
   await pruneGuestHistory();
 }
 
@@ -173,13 +205,15 @@ export async function touchGuestSession(sessionId) {
   const done = transactionComplete(transaction);
   const sessions = transaction.objectStore(SESSION_STORE);
   const session = await requestResult(sessions.get(sessionId));
-  if (session?.state === 'active') {
-    sessions.put({ ...session, updatedAt: new Date().toISOString() });
+  if (isWritableGuestSession(session) && ['active', 'interrupted'].includes(session.state)) {
+    sessions.put({ ...session, state: 'active', endedAt: null, updatedAt: new Date().toISOString() });
   }
   await done;
 }
 
 export async function recoverInterruptedGuestSessions() {
+  if (!canCoordinateGuestSessions()) return pruneGuestHistory();
+  const live = await liveGuestSessions();
   const database = await openDatabase();
   const transaction = database.transaction(SESSION_STORE, 'readwrite');
   const done = transactionComplete(transaction);
@@ -188,8 +222,7 @@ export async function recoverInterruptedGuestSessions() {
   // A generous lease avoids treating a backgrounded practice tab as abandoned.
   const cutoff = Date.now() - 5 * 60 * 1000;
   for (const session of all) {
-    if (session.owner === 'guest' && session.state === 'active' &&
-      new Date(session.updatedAt).getTime() < cutoff) {
+    if (isAbandonedGuestSession(session, live, cutoff)) {
       if (session.attemptCount === 0) sessions.delete(session.id);
       else sessions.put({ ...session, state: 'interrupted', endedAt: session.updatedAt });
     }
@@ -215,6 +248,8 @@ async function deleteSessions(sessionIds, { keepMetadata = false } = {}) {
   const sessions = transaction.objectStore(SESSION_STORE);
   const attempts = transaction.objectStore(ATTEMPT_STORE);
   for (const id of sessionIds) {
+    const session = await requestResult(sessions.get(id));
+    if (session?.state === 'active') continue;
     if (!keepMetadata) sessions.delete(id);
     const keys = await requestResult(attempts.index('sessionId').getAllKeys(id));
     for (const key of keys) attempts.delete(key);
@@ -223,6 +258,7 @@ async function deleteSessions(sessionIds, { keepMetadata = false } = {}) {
 }
 
 export async function pruneGuestHistory() {
+  const live = await liveGuestSessions();
   const database = await openDatabase();
   const transaction = database.transaction(SESSION_STORE, 'readonly');
   const done = transactionComplete(transaction);
@@ -230,6 +266,7 @@ export async function pruneGuestHistory() {
   await done;
   const cutoff = Date.now() - DEVICE_HISTORY_DAYS * DAY_MS;
   const inactive = all.filter((session) => session.owner === 'guest' && session.state !== 'active')
+    .filter(session => !live.has(session.id))
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   let keptSessions = 0;
   let keptAttempts = 0;
@@ -280,18 +317,31 @@ export async function markGuestSessionImported(sessionId, userId) {
   await pruneGuestHistory();
 }
 
-export async function claimGuestSessionImport(sessionId, userId) {
+export async function claimGuestSessionImport(sessionId, userId, generation = '0') {
+  const locks = globalThis.navigator?.locks;
+  if (locks?.request) {
+    return locks.request('mental-math-guest:' + sessionId, { ifAvailable: true }, lock => {
+      if (!lock) throw new Error('Finish this guest round before importing its history.');
+      return claimInactiveGuestSession(sessionId, userId, generation);
+    });
+  }
+  return claimInactiveGuestSession(sessionId, userId, generation);
+}
+
+async function claimInactiveGuestSession(sessionId, userId, generation) {
   const database = await openDatabase();
   const transaction = database.transaction(SESSION_STORE, 'readwrite');
   const done = transactionComplete(transaction);
   const sessions = transaction.objectStore(SESSION_STORE);
   const session = await requestResult(sessions.get(sessionId));
-  if (!session || session.importedTo || (session.importOwnerId && session.importOwnerId !== userId)) {
+  if (!canImportGuestSession(session, userId)) {
     await done;
     throw new Error('This guest session is already assigned to another account.');
   }
-  sessions.put({ ...session, importOwnerId: userId });
+  const importGeneration = generation;
+  sessions.put({ ...session, importOwnerId: userId, importGeneration });
   await done;
+  return importGeneration;
 }
 
 function accountRowKey(row) {
@@ -328,12 +378,30 @@ export async function getPendingAccountProgressRows(userId) {
   return entries.map((entry) => entry.row);
 }
 
-export async function clearPendingAccountProgressRows(userId) {
+export async function clearPendingAccountProgressRows(userId, generation) {
   const database = await openDatabase();
   const transaction = database.transaction(ACCOUNT_QUEUE_STORE, 'readwrite');
   const done = transactionComplete(transaction);
   const queue = transaction.objectStore(ACCOUNT_QUEUE_STORE);
-  const keys = await requestResult(queue.index('userId').getAllKeys(userId));
-  for (const key of keys) queue.delete(key);
+  const entries = await requestResult(queue.index('userId').getAll(userId));
+  for (const { key, row } of entries) {
+    if (generation === undefined || String(row.reset_generation ?? 0) !== generation) queue.delete(key);
+  }
   await done;
+}
+
+function isWritableGuestSession(session) {
+  return Boolean(session?.owner === 'guest' && !session.importedTo && !session.importOwnerId);
+}
+
+function isAbandonedGuestSession(session, live, cutoff) {
+  if (live.has(session.id)) return false;
+  return session.owner === 'guest' && session.state === 'active' &&
+    new Date(session.updatedAt).getTime() < cutoff;
+}
+
+function canImportGuestSession(session, userId) {
+  if (!session) return false;
+  if (session.importedTo || session.state === 'active') return false;
+  return !session.importOwnerId || session.importOwnerId === userId;
 }

@@ -115,6 +115,41 @@ function assertSupportedScalar(value, formatter) {
   throw new Error(`AI MODE does not support ${valueType} results.`);
 }
 
+function validateExpressionSize(rootNode) {
+  const depths = new Map();
+  let nodeCount = 0;
+  rootNode.traverse((node, _path, parent) => {
+    nodeCount += 1;
+    const depth = (depths.get(parent) || 0) + 1;
+    depths.set(node, depth);
+    if (nodeCount > 128 || depth > 32) throw new Error('Use a smaller expression with fewer nested operations.');
+  });
+}
+
+function assertMagnitude(value) {
+  if (Math.abs(value.e) > 4096) throw new Error('Use numbers with a smaller magnitude.');
+}
+
+function validateExpressionPowers(rootNode) {
+  const powers = [];
+  rootNode.traverse(node => { if (node.type === 'OperatorNode' && node.op === '^') powers.push(node); });
+  for (const node of powers.reverse()) {
+    const exponentValue = decimalMath.evaluate(getNodeExpression(node.args[1]));
+    const exponent = Number(exponentValue.toString());
+    if (!Number.isFinite(exponent) || Math.abs(exponent) > 4096) {
+      throw new Error('Use exponents between -4,096 and 4,096.');
+    }
+    const base = decimalMath.evaluate(getNodeExpression(node.args[0]));
+    assertMagnitude({ e: (Math.abs(base.e) + 1) * Math.abs(exponent) });
+  }
+}
+
+function validateOperator(node) {
+  if (!ALLOWED_OPERATORS.has(node.op)) {
+    throw new Error(`The operator "${node.op}" is not allowed in AI MODE.`);
+  }
+}
+
 function validateExpressionNode(rootNode) {
   rootNode.traverse((node, _path, parent) => {
     switch (node.type) {
@@ -122,13 +157,12 @@ function validateExpressionNode(rootNode) {
         if (!isNumericConstantNode(node)) {
           throw new Error('Only numeric constants are allowed in AI MODE.');
         }
+        assertMagnitude(node.value);
         return;
       case 'ParenthesisNode':
         return;
       case 'OperatorNode':
-        if (!ALLOWED_OPERATORS.has(node.op)) {
-          throw new Error(`The operator "${node.op}" is not allowed in AI MODE.`);
-        }
+        validateOperator(node);
         return;
       case 'FunctionNode': {
         const functionName = node.fn?.name;
@@ -257,6 +291,7 @@ export function solveAiExpression(expression) {
   if (!trimmedExpression) {
     throw new Error('Enter a mathematical expression to solve.');
   }
+  assertExpressionLength(trimmedExpression);
 
   const normalizedExpression = normalizeExpressionText(trimmedExpression);
 
@@ -267,14 +302,27 @@ export function solveAiExpression(expression) {
     throw new Error('The expression could not be parsed.');
   }
 
+  validateExpressionSize(parsedNode);
   validateExpressionNode(parsedNode);
+  validateExpressionPowers(parsedNode);
 
   const result = isExactCapable(parsedNode)
     ? buildExactResult(parsedNode)
     : buildDecimalResult(normalizedExpression);
+  assertResultLength(result);
 
   return {
     normalizedExpression,
     ...result
   };
+}
+
+function assertExpressionLength(expression) {
+  if (expression.length > 1024) throw new Error('Expressions can contain up to 1,024 characters.');
+}
+
+function assertResultLength(result) {
+  if (Math.max(result.exactText.length, result.decimalText.length) > 4096) {
+    throw new Error('The result is too large to display. Use a smaller expression.');
+  }
 }

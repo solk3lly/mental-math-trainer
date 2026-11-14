@@ -45,12 +45,77 @@ test('reset in another tab invalidates buffered AI rows and permits later answer
   t.after(() => buffer.dispose());
   buffer.enqueue({ user_id: 'cross-tab-admin', session_id: 'before-reset', question_index: 1 });
   await b.coordinator.resetAccountProgress('cross-tab-admin', async () => { rows.length = 0; });
-  const result = await buffer.flush({ keepalive: true });
-  assert.equal(rows.length, 0);
-  assert.equal(result.flushedCount, 0);
   buffer.enqueue({ user_id: 'cross-tab-admin', session_id: 'after-reset', question_index: 1 });
-  await buffer.flush();
-  assert.deepEqual(rows.map(row => row.session_id), ['after-reset']);
+  const result = await buffer.flush({ keepalive: true });
+  assert.equal(result.flushedCount, 1);
+  assert.ok(rows.length > 0);
+  assert.ok(rows.every(row => row.session_id === 'after-reset'));
+});
+
+test('a newly observed cloud generation lets new answers pass an older buffered batch', async t => {
+  const { coordinator, ai } = await isolatedTab('remote-reset');
+  const userId = 'remote-reset-owner';
+  let generation = '0';
+  const rows = [];
+  const client = { rpc: async () => ({ data: generation, error: null }),
+    from: () => ({ upsert: async batch => { rows.push(...batch); return { error: null }; } }) };
+  await coordinator.getAccountProgressGeneration(client, userId);
+  const buffer = ai.createAiModeLogBuffer({ getClient: () => client,
+    setTimeoutImpl: () => 1, clearTimeoutImpl() {} });
+  t.after(() => buffer.dispose());
+  buffer.enqueue({ user_id: userId, reset_generation: '0', session_id: 'old', question_index: 1 });
+  generation = '1';
+  await coordinator.getAccountProgressGeneration(client, userId);
+  buffer.enqueue({ user_id: userId, reset_generation: '1', session_id: 'new', question_index: 1 });
+  assert.equal((await buffer.flush()).flushedCount, 1);
+  assert.deepEqual(rows.map(row => row.session_id), ['new']);
+});
+
+test('an answer with the new server generation survives a reset response still in flight', async t => {
+  const { coordinator, ai } = await isolatedTab('reset-response');
+  const started = deferred();
+  const gate = deferred();
+  const userId = 'reset-response-owner';
+  const rows = [];
+  const client = { rpc: async () => ({ data: '1', error: null }),
+    from: () => ({ upsert: async batch => { rows.push(...batch); return { error: null }; } }) };
+  const buffer = ai.createAiModeLogBuffer({ getClient: () => client,
+    setTimeoutImpl: () => 1, clearTimeoutImpl() {} });
+  t.after(() => buffer.dispose());
+  const reset = coordinator.resetAccountProgress(userId, async () => {
+    started.resolve(); await gate.promise; return '1';
+  });
+  await started.promise;
+  await coordinator.getAccountProgressGeneration(client, userId);
+  const newAnswer = { user_id: userId, reset_generation: '1', session_id: 'new', question_index: 1 };
+  buffer.enqueue(newAnswer);
+  const saved = buffer.flush();
+  gate.resolve();
+  await reset;
+  assert.equal((await saved).flushedCount, 1);
+  assert.deepEqual(rows, [newAnswer]);
+});
+
+test('failed reset keeps manual answers available for the next successful save', async t => {
+  const { resetAccountProgress } = await import('../utils/progressWriteCoordinator.js');
+  const { createProgressLogBuffer } = await import('../utils/progressLogs.js');
+  const rows = [];
+  const buffer = createProgressLogBuffer({
+    getClient: () => ({ from: () => ({ upsert: async batch => {
+      rows.push(...batch);
+      return { error: null };
+    } }) }),
+    setTimeoutImpl: () => 1,
+    clearTimeoutImpl() {}
+  });
+  t.after(() => buffer.dispose());
+  const answer = { user_id: 'failed-reset', session_id: 'pending', question_index: 1 };
+  buffer.enqueue(answer);
+  await assert.rejects(resetAccountProgress(answer.user_id, async () => {
+    throw new Error('Cloud deletion failed');
+  }), /Cloud deletion failed/);
+  assert.equal((await buffer.flush()).flushedCount, 1);
+  assert.deepEqual(rows, [answer]);
 });
 
 test('a writer already waiting for a shared lock rechecks another tab reset before uploading', async t => {

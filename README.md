@@ -38,6 +38,16 @@ The mixed trainer uses difficulty levels per operation:
 | Multiplication | Off, Warmup, Easy, Medium, Hard, Expert |
 | Division       | Off, Warmup, Easy, Medium, Hard         |
 
+Letter shortcuts can be disabled under **Utility → Keyboard shortcuts**. The
+choice is stored in this browser. Enter continues to submit answers.
+
+The administrator's custom calculator runs in a cancellable worker with a
+1.5-second deadline. Expressions are limited to 1,024 characters, 128 syntax
+nodes, 32 levels of nesting, and 4,096 output characters. Exponents are limited
+to ±4,096; numeric constants and estimated powers also have a decimal magnitude
+budget of 4,096. A timeout asks for a
+smaller expression and leaves the trainer responsive.
+
 ## Appearance
 
 Open **Utility → Appearance** to choose an interface, color theme, and display
@@ -114,6 +124,24 @@ also need the interface-style migrations:
 
 The interface-collection migration enables account sync for all twelve styles.
 
+Apply the November 14 migrations before serving this web version:
+
+- `20261114000000_reset_account_progress.sql` adds atomic account resets and a
+  generation checked on every progress insert. Older clients can save until the
+  first reset; afterward they must refresh to obtain the new generation.
+- `20261114010000_schedule_progress_retention.sql` requires `pg_cron` and schedules
+  deletion of account answers older than 90 days, hourly at minute 17. Confirm the
+  named job `mental-math-progress-retention` is active and inspect its run history.
+
+The retention job runs as the migration owner. For a self-hosted database, arrange
+`pg_cron` support before applying that migration. See the
+[extension setup instructions](https://github.com/citusdata/pg_cron#setting-up-pg_cron)
+and [Supabase Cron guide](https://supabase.com/docs/guides/cron).
+
+Guest tabs use Web Locks to protect live rounds during recovery and import.
+Browsers without that API keep active sessions out of automatic recovery; their
+history remains visible, and completed sessions remain importable.
+
 Apply `20261102055520_add_user_preferences_revision.sql` before deploying this
 version. Preference saves and Realtime updates use a database-generated revision
 to preserve their order across devices with different clocks.
@@ -127,11 +155,11 @@ delivery and verify the reset-link flow. Users request a link at
 ## Android release
 
 The GitHub-distributed Android app has a separate native packaging source archive.
-The signed [Android 1.0.4 release](https://github.com/prezvious/mental-math-trainer/releases/tag/android-v1.0.4)
+The signed [Android 1.0.5 release](https://github.com/prezvious/mental-math-trainer/releases/tag/android-v1.0.5)
 includes the Android 10 updater compatibility fix, update manifest, and full source
 archive. See [updater compatibility and recovery](docs/android-update-compatibility.md)
 for the cause, instructions, and verification limits. If the old updater rejects
-the APK, install the downloaded 1.0.4 APK manually over the existing app once.
+the APK, install the downloaded 1.0.5 APK manually over the existing app once.
 Do not uninstall or clear storage.
 
 ## Tech Stack
@@ -145,4 +173,4 @@ Do not uninstall or clear storage.
 
 ## License
 
-[MIT](LICENSE)
+[GNU General Public License, version 3](LICENSE)

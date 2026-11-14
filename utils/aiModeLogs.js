@@ -1,4 +1,4 @@
-import { getProgressWriteGeneration, registerProgressBuffer, withAccountProgressWrite } from './progressWriteCoordinator.js';
+import { getProgressWriteGeneration, isProgressRowCurrent, registerProgressBuffer, writeBufferedProgress } from './progressWriteCoordinator.js';
 
 export const AI_MODE_LOG_TABLE = 'ai_mode_logs';
 export const AI_MODE_LOG_INSERT_BATCH_SIZE = 500;
@@ -40,10 +40,12 @@ export function buildAiModeLogRow(
   userId,
   sessionId,
   questionIndex,
-  createdAt = new Date().toISOString()
+  createdAt = new Date().toISOString(),
+  resetGeneration
 ) {
   return {
     user_id: userId,
+    ...(resetGeneration === undefined ? {} : { reset_generation: resetGeneration }),
     session_id: sessionId,
     question_index: questionIndex,
     source_kind: sourceKind,
@@ -64,7 +66,8 @@ export function buildAiModeTrainerLogRow(
   userId,
   sessionId,
   questionIndex,
-  createdAt = new Date().toISOString()
+  createdAt = new Date().toISOString(),
+  resetGeneration
 ) {
   return buildAiModeLogRow(
     {
@@ -80,7 +83,8 @@ export function buildAiModeTrainerLogRow(
     userId,
     sessionId,
     questionIndex,
-    createdAt
+    createdAt,
+    resetGeneration
   );
 }
 
@@ -90,7 +94,8 @@ export function buildAiModeCustomLogRow(
   userId,
   sessionId,
   questionIndex = 1,
-  createdAt = new Date().toISOString()
+  createdAt = new Date().toISOString(),
+  resetGeneration
 ) {
   return buildAiModeLogRow(
     {
@@ -106,7 +111,8 @@ export function buildAiModeCustomLogRow(
     userId,
     sessionId,
     questionIndex,
-    createdAt
+    createdAt,
+    resetGeneration
   );
 }
 
@@ -179,7 +185,7 @@ export function createAiModeLogBuffer({
   let flushTimer = null;
   let flushPromise = null;
   const generations = new WeakMap();
-  const isCurrent = row => generations.get(row) === getProgressWriteGeneration(row.user_id);
+  const isCurrent = row => isProgressRowCurrent(row, generations.get(row));
 
   const cancelScheduledFlush = () => {
     if (flushTimer) {
@@ -200,9 +206,9 @@ export function createAiModeLogBuffer({
       return false;
     }
 
-    void withAccountProgressWrite(rows[0].user_id, () => persistAiModeLogRowsKeepalive(
-      rows.filter(isCurrent), { accessToken, restConfig, fetchImpl }
-    ), generations.get(rows[0])).catch(() => {});
+    void writeBufferedProgress(rows, isCurrent, current => persistAiModeLogRowsKeepalive(
+      current, { accessToken, restConfig, fetchImpl }
+    )).catch(() => {});
 
     return true;
   };
@@ -243,11 +249,10 @@ export function createAiModeLogBuffer({
         }
 
         try {
-          await withAccountProgressWrite(snapshot[0].user_id, async () => {
-            const current = snapshot.filter(isCurrent);
+          await writeBufferedProgress(snapshot, isCurrent, async current => {
             await persistAiModeLogBatches(client, current, batchSize);
             flushedCount += current.length;
-          }, generations.get(snapshot[0]));
+          });
         } catch (error) {
           pendingRows = [...snapshot.filter(isCurrent), ...pendingRows];
           throw error;
@@ -290,7 +295,7 @@ export function createAiModeLogBuffer({
   };
 
   const unregister = registerProgressBuffer(userId => {
-    pendingRows = pendingRows.filter(row => row.user_id !== userId);
+    pendingRows = pendingRows.filter(row => row.user_id !== userId || isCurrent(row));
     if (!pendingRows.length) cancelScheduledFlush();
   });
 

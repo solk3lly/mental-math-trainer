@@ -17,6 +17,8 @@ async function renderShell(t, user = null) {
   dependencies['utils/accountPreferencesContext.js'] = { useAccountPreferences: () => ({ themeKey: 'carbon-paper', displayMode: 'light', interfaceStyle: 'studio', isLoadingPreferences: false, upsertPreferences: async () => ({ error: null }) }) };
   dependencies['utils/activeSessionContext.js'] = { useActiveSession: () => session };
   dependencies['utils/useResolvedDisplayMode.js'] = { useResolvedDisplayMode: () => 'light' };
+  dependencies['utils/useLetterShortcuts.js'] = await import('../utils/useLetterShortcuts.js');
+  dependencies['utils/roundNavigation.js'] = await import('../utils/roundNavigation.js');
   const { Page } = loadPage('components/SiteLayout.js', dependencies);
   let renderer;
   await act(async () => { renderer = create(React.createElement(Page)); });

@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { isAdminEmail, normalizeEmail } from 'utils/adminAccess.js';
 import { getSupabaseClient, isSupabaseConfigured } from 'utils/supabaseClient.js';
+import { matchesRecoverySession, readRecoverySession, recoveryAfterAuthEvent, storeRecoverySession } from './recoverySession.js';
 
 function areSessionsEquivalent(previousSession, nextSession) {
   if (previousSession === nextSession) {
@@ -30,6 +31,7 @@ const SupabaseAuthContext = createContext({
   isAdmin: false,
   isRecoverySession: false,
   clearRecoverySession: () => {},
+  validateRecoverySession: () => false,
   signOut: async () => ({ error: null })
 });
 
@@ -38,14 +40,10 @@ export function SupabaseAuthProvider({ children }) {
   const isConfigured = isSupabaseConfigured();
   const [session, setSession] = useState(null);
   const [isLoading, setIsLoading] = useState(isConfigured);
-  const [isRecoverySession, setIsRecoverySession] = useState(false);
+  const [recoverySession, setRecoverySession] = useState(null);
 
   useEffect(() => {
-    try {
-      setIsRecoverySession(window.sessionStorage.getItem('mental-math-recovery') === '1');
-    } catch (_error) {
-      // Private browsing may deny session storage; the auth event still works.
-    }
+    setRecoverySession(readRecoverySession());
   }, []);
 
   useEffect(() => {
@@ -87,13 +85,11 @@ export function SupabaseAuthProvider({ children }) {
     const {
       data: { subscription }
     } = client.auth.onAuthStateChange((event, nextSession) => {
-      if (event === 'PASSWORD_RECOVERY') {
-        setIsRecoverySession(true);
-        try { window.sessionStorage.setItem('mental-math-recovery', '1'); } catch (_error) {}
-      } else if (event === 'SIGNED_OUT') {
-        setIsRecoverySession(false);
-        try { window.sessionStorage.removeItem('mental-math-recovery'); } catch (_error) {}
-      }
+      setRecoverySession(previous => {
+        const recovery = recoveryAfterAuthEvent(previous, event, nextSession);
+        storeRecoverySession(recovery);
+        return recovery;
+      });
       setSession((previousSession) =>
         areSessionsEquivalent(previousSession, nextSession ?? null)
           ? previousSession
@@ -119,8 +115,8 @@ export function SupabaseAuthProvider({ children }) {
   };
 
   const clearRecoverySession = () => {
-    setIsRecoverySession(false);
-    try { window.sessionStorage.removeItem('mental-math-recovery'); } catch (_error) {}
+    setRecoverySession(null);
+    storeRecoverySession(null);
   };
 
   const value = useMemo(
@@ -135,12 +131,13 @@ export function SupabaseAuthProvider({ children }) {
         userEmail,
         user: session?.user ?? null,
         isAdmin: isAdminEmail(userEmail),
-        isRecoverySession,
+        isRecoverySession: matchesRecoverySession(recoverySession, session),
+        validateRecoverySession: () => matchesRecoverySession(recoverySession, session),
         clearRecoverySession,
         signOut
       };
     },
-    [client, isConfigured, isLoading, isRecoverySession, session]
+    [client, isConfigured, isLoading, recoverySession, session]
   );
 
   return (

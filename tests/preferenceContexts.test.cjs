@@ -21,7 +21,8 @@ async function fixture(t, kind) {
   auth.client = {
     from: () => ({
       select: () => ({ eq: (_column, owner) => ({ maybeSingle: async () => ({ data: initialRow(owner), error: null }) }) }),
-      upsert: row => {
+      update: patch => ({ eq: (_column, owner) => {
+        const row = { ...(saved.get(owner) || initialRow(owner)), ...patch, user_id: owner };
         let resolve;
         const promise = new Promise(done => { resolve = done; }).then(result => {
           if (result.error) return { data: null, error: result.error };
@@ -30,12 +31,13 @@ async function fixture(t, kind) {
           return { data, error: null };
         });
         requests.push({ row, resolve });
-        promise.select = () => ({ single: () => promise });
+        promise.select = () => ({ maybeSingle: () => promise });
         return promise;
-      }
+      } })
     })
   };
   const dependencies = {
+    './preferenceWrites.js': await import('../utils/preferenceWrites.js'),
     './accountPreferences.js': preferences,
     './accountPreferenceSync.js': { ...sync, subscribeToAccountPreferenceChanges: (_client, _owner, callback) => { onChange = callback; return () => {}; } },
     './mixedDifficulty.js': mixed,

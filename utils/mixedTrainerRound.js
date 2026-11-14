@@ -25,6 +25,12 @@ export function createMixedActiveRound(
   };
 }
 
+export function startMixedRound(settings, metadata) {
+  const operation = pickRandomOperation(getEnabledOperations(settings));
+  const problem = createMixedProblem(operation, getDifficultyForOperation(settings, operation));
+  return { ...createMixedActiveRound(settings, problem, Date.now(), metadata.sessionId), ...metadata };
+}
+
 function createMixedAttempt(
   currentProblem,
   submittedAnswer,

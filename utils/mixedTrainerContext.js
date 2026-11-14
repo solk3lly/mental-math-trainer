@@ -17,6 +17,7 @@ import {
   writeGuestMixedPreferences
 } from './mixedTrainerPreferences.js';
 import { useSupabaseAuth } from './supabaseAuthContext.js';
+import { changedPreferenceFields, mergePreferenceChanges, persistPreferencePatch } from './preferenceWrites.js';
 
 const MixedTrainerContext = createContext({
   mixedSettings: DEFAULT_MIXED_SETTINGS,
@@ -104,15 +105,15 @@ export function MixedTrainerProvider({ children }) {
         const snapshot = scope.pending;
         scope.pending = null;
 
-        const { error } = await client
-          .from(MIXED_PREFERENCES_TABLE)
-          .upsert(snapshot, {
-            onConflict: 'user_id'
-          });
+        const { error } = await persistPreferencePatch(client, {
+          table: MIXED_PREFERENCES_TABLE, columns: MIXED_PREFERENCES_COLUMNS,
+          userId, patch: snapshot,
+          initialRow: buildMixedPreferencesRow(userId, latestRef.current)
+        });
 
         if (saveScopeRef.current !== scope) return;
         if (error) {
-          scope.pending = scope.pending || snapshot;
+          scope.pending = { ...snapshot, ...scope.pending };
           throw error;
         }
       }
@@ -124,7 +125,7 @@ export function MixedTrainerProvider({ children }) {
   }, [client, userId]);
 
   const upsertMixedSettings = useCallback(
-    async (patch = {}) => {
+    async function saveMixedSettings(patch = {}) {
       const scope = saveScopeRef.current;
       if (!scope || scope.userId !== userId || scope.client !== client) {
         return { error: new Error('The account changed before preferences could be saved.') };
@@ -134,15 +135,19 @@ export function MixedTrainerProvider({ children }) {
         ...patch
       });
 
+      const changes = changedPreferenceFields(
+        buildMixedPreferencesRow(userId, latestRef.current),
+        buildMixedPreferencesRow(userId, next)
+      );
       latestRef.current = next;
       setSettings(next);
 
       if (!client || !userId) {
-        writeGuestMixedPreferences(next);
-        return { error: null };
+        const saved = writeGuestMixedPreferences(next);
+        return { error: saved ? null : new Error('Settings changed for now. This browser could not save them.') };
       }
 
-      scope.pending = buildMixedPreferencesRow(userId, next);
+      scope.pending = mergePreferenceChanges(scope.pending, changes);
 
       try {
         await flushPending();

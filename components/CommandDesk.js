@@ -44,6 +44,19 @@ function ThemeSwatches({ theme, className = '' }) {
   );
 }
 
+function preferenceStatus(result, success) {
+  return result.error?.message || success;
+}
+
+function LetterShortcutSettings({ enabled, onChange }) {
+  return (
+    <label className='toggle-row'>
+      <span>Letter shortcuts</span>
+      <input type='checkbox' checked={enabled} onChange={event => onChange(event.target.checked)} />
+    </label>
+  );
+}
+
 export default function CommandDesk({
   activeTheme,
   closeButtonRef,
@@ -51,6 +64,8 @@ export default function CommandDesk({
   interfaceStyle,
   drawerRef,
   isLoadingPreferences,
+  letterShortcutsEnabled,
+  onLetterShortcutsChange,
   onClose,
   onDisplayModeChange,
   onInterfaceStyleChange,
@@ -156,14 +171,12 @@ export default function CommandDesk({
     focusThemeResult(currentIndex + (event.key === 'ArrowDown' ? 1 : -1));
   };
 
-  const handleThemeSelection = (themeKey) => {
-    setStatusMessage('Theme applied.');
-    onThemeChange(themeKey);
+  const handleThemeSelection = async (themeKey) => {
+    setStatusMessage(preferenceStatus(await onThemeChange(themeKey), 'Theme saved.'));
   };
 
-  const handleDisplayModeSelection = (nextDisplayMode) => {
-    setStatusMessage('');
-    onDisplayModeChange(nextDisplayMode);
+  const handleDisplayModeSelection = async (nextDisplayMode) => {
+    setStatusMessage(preferenceStatus(await onDisplayModeChange(nextDisplayMode), 'Display mode saved.'));
   };
 
   const handleInterfaceStyleSelection = async (nextInterfaceStyle) => {
@@ -175,12 +188,9 @@ export default function CommandDesk({
     );
   };
 
-  const handleResetAppearance = () => {
-    setStatusMessage('Appearance reset to Studio, Carbon Paper, and Adaptive mode.');
-    Promise.resolve(onResetAppearance()).then(
-      () => themeSummaryButtonRef.current?.focus(),
-      () => themeSummaryButtonRef.current?.focus()
-    );
+  const handleResetAppearance = async () => {
+    setStatusMessage(preferenceStatus(await onResetAppearance(), 'Appearance reset to Studio, Carbon Paper, and Adaptive mode.'));
+    themeSummaryButtonRef.current?.focus();
   };
 
   const isAppearanceDefault =
@@ -436,6 +446,7 @@ export default function CommandDesk({
               </span>
             </button>
 
+            <LetterShortcutSettings enabled={letterShortcutsEnabled} onChange={onLetterShortcutsChange} />
             {isShortcutsExpanded && (
               <div id='command-desk-shortcuts' className='hotkey-reference'>
                 {HOTKEY_REFERENCE_GROUPS.map((group) => (

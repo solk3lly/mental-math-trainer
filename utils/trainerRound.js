@@ -1,3 +1,4 @@
+import { appendRoundAttempt, copyActiveRound, getActiveRoundStats, getRoundProblemKeys } from './roundHistory.js';
 import {
   buildDirectExponentiationOperandPool,
   createProblem,
@@ -60,21 +61,8 @@ export function createAttempt(
   };
 }
 
-function getProblemKey(problem) {
-  return `${problem.practiceMode || PRACTICE_MODES.POSITIVE}:${problem.operation}:${problem.leftOperand}:${problem.rightOperand}`;
-}
-
 function getExponentiationProblemKey(base, exponent) {
   return `${PRACTICE_MODES.POSITIVE}:EXPONENTIATION:${base}:${exponent}`;
-}
-
-function buildUsedProblemKeys(activeRound, attempts = activeRound.attempts) {
-  const problemKeys = new Set(attempts.map(getProblemKey));
-  if (activeRound.currentProblem) {
-    problemKeys.add(getProblemKey(activeRound.currentProblem));
-  }
-
-  return problemKeys;
 }
 
 function buildExponentiationProblem(base, exponent) {
@@ -98,8 +86,7 @@ function createNextExponentiationProblem(settings, excludedProblemKeys) {
   return buildExponentiationProblem(base, exponent);
 }
 
-function createNextProblem(activeRound, attempts, createProblemImpl = createProblem) {
-  const excludedProblemKeys = buildUsedProblemKeys(activeRound, attempts);
+function createNextProblem(activeRound, acceptedRound, createProblemImpl = createProblem) {
   const { settings } = activeRound;
 
   if (
@@ -107,7 +94,7 @@ function createNextProblem(activeRound, attempts, createProblemImpl = createProb
     settings.operation === 'EXPONENTIATION' &&
     createProblemImpl === createProblem
   ) {
-    return createNextExponentiationProblem(settings, excludedProblemKeys);
+    return createNextExponentiationProblem(settings, getRoundProblemKeys(acceptedRound));
   }
 
   return createProblemImpl(settings);
@@ -127,32 +114,27 @@ export function resolveRoundSubmission(
     responseMs,
     createdAt
   );
-  const attempts = [...activeRound.attempts, attempt];
-  const isComplete = attempts.length >= activeRound.settings.roundSize;
-
-  if (isComplete) {
-    return {
-      attempt,
-      attempts,
-      isComplete,
-      nextActiveRound: null
-    };
-  }
-
-  const nextProblem = createNextProblem(activeRound, attempts, createProblemImpl);
-
-  return {
-    attempt,
-    attempts,
-    isComplete,
-    nextActiveRound: {
-      ...activeRound,
-      sessionId: activeRound.sessionId,
-      attempts,
-      currentProblem: nextProblem,
-      questionStartedAt: nextQuestionStartedAt,
-      questionId: activeRound.questionId + 1
+  const acceptedRound = appendRoundAttempt(activeRound, attempt);
+  const attemptCount = getActiveRoundStats(acceptedRound).total;
+  const isComplete = attemptCount >= activeRound.settings.roundSize;
+  let nextActiveRound = null;
+  let generationError = null;
+  if (!isComplete) {
+    try {
+      const nextProblem = createNextProblem(activeRound, acceptedRound, createProblemImpl);
+      nextActiveRound = copyActiveRound(acceptedRound, {
+        currentProblem: nextProblem,
+        questionStartedAt: nextQuestionStartedAt,
+        questionId: activeRound.questionId + 1
+      });
+    } catch (error) {
+      generationError = error;
+      nextActiveRound = acceptedRound;
     }
+  }
+  return {
+    attempt, attemptCount, isComplete, nextActiveRound, generationError,
+    get attempts() { return acceptedRound.attempts; }
   };
 }
 
@@ -173,17 +155,17 @@ export function processRoundSubmission(
   }
 
   const responseMs = Math.max(1, submittedAt - activeRound.questionStartedAt);
-  return {
-    ignored: false,
-    handledQuestionId: questionId,
-    responseMs,
-    ...resolveRoundSubmission(
+  const submission = resolveRoundSubmission(
       activeRound,
       submittedAnswer,
       responseMs,
       submittedAt,
       createProblemImpl,
       new Date(submittedAt).toISOString()
-    )
-  };
+    );
+  return Object.defineProperties(submission, {
+    ignored: { value: false, enumerable: true },
+    handledQuestionId: { value: questionId, enumerable: true },
+    responseMs: { value: responseMs, enumerable: true }
+  });
 }

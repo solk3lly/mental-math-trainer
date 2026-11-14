@@ -6,11 +6,15 @@ const { loadPage } = require('./helpers/renderPage.cjs');
 
 async function fixture(t, mode, initialUser = null) {
   const names = ['mathEngine', 'trainerRound', 'trainerPresentation', 'mixedDifficulty', 'mixedTrainerRound',
-    'mixedTrainerPresentation', 'aiTrainer', 'aiCycle', 'aiModeLogs', 'progressLogs', 'progressWriteCoordinator', 'hotkeys'];
+    'mixedTrainerPresentation', 'aiTrainer', 'aiCycle', 'aiModeLogs', 'progressLogs', 'progressWriteCoordinator', 'hotkeys', 'roundHistory', 'aiCalculator'];
   const dependencies = Object.fromEntries(await Promise.all(names.map(async name =>
     [`utils/${name}.js`, await import(`../utils/${name}.js`)])));
+  const { exports: roundStart } = require('./helpers/renderPage.cjs').loadModule('utils/useAccountProgressRound.js', {
+    './progressWriteCoordinator.js': dependencies['utils/progressWriteCoordinator.js']
+  });
+  dependencies['utils/useAccountProgressRound.js'] = roundStart;
   dependencies['utils/utils.js'] = { DIGIT_OPTIONS: [1, 2, 3, 4, 5, 6, 7, 8] };
-  let auth = { client: {}, session: { access_token: 'test' }, user: initialUser, isAdmin: false };
+  let auth = { client: { rpc: async () => ({ data: '0', error: null }) }, session: { access_token: 'test' }, user: initialUser, isAdmin: false };
   const calls = { guest: [], account: [], finished: [] };
   const buffer = { enqueue: row => calls.account.push(row), flush: async () => {}, clear() {}, dispose() {} };
   const settings = dependencies['utils/mathEngine.js'].sanitizeSettings({ operation: 'ADDITION', roundSize: 3, leftDigits: 1, rightDigits: 1 });

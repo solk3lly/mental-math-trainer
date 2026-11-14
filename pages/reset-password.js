@@ -5,8 +5,12 @@ import PageIntro from 'components/PageIntro.js';
 import { isPasswordValid, validatePassword } from 'utils/passwordValidation.js';
 import { useSupabaseAuth } from 'utils/supabaseAuthContext.js';
 
+function passwordUpdateError(error) {
+  return error?.message || 'Could not update your password. Please try again.';
+}
+
 export default function ResetPasswordPage() {
-  const { client, user, isConfigured, isLoading, isRecoverySession, clearRecoverySession } = useSupabaseAuth();
+  const { client, user, isConfigured, isLoading, isRecoverySession, validateRecoverySession, clearRecoverySession } = useSupabaseAuth();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -15,6 +19,12 @@ export default function ResetPasswordPage() {
   const validation = useMemo(() => validatePassword(password), [password]);
   const isReady = isPasswordValid(validation) && password === confirmPassword;
   const canReset = Boolean(client && user && isRecoverySession);
+
+  function assertRecoverySession() {
+    if (validateRecoverySession()) return;
+    clearRecoverySession();
+    throw new Error('This reset link has expired. Request a new link.');
+  }
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -26,6 +36,7 @@ export default function ResetPasswordPage() {
     setIsSubmitting(true);
     setErrorMessage('');
     try {
+      assertRecoverySession();
       const { error } = await client.auth.updateUser({ password });
       if (error) throw error;
       setPassword('');
@@ -33,7 +44,7 @@ export default function ResetPasswordPage() {
       clearRecoverySession();
       setIsComplete(true);
     } catch (error) {
-      setErrorMessage(error?.message || 'Could not update your password. Please try again.');
+      setErrorMessage(passwordUpdateError(error));
     } finally {
       setIsSubmitting(false);
     }

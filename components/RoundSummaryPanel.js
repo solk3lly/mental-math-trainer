@@ -4,6 +4,14 @@ import SlidersHorizontalIcon from 'images/phosphor/sliders-horizontal.svg';
 import TrophyIcon from 'images/phosphor/trophy.svg';
 import { formatDuration } from 'utils/mathEngine.js';
 
+function RoundCompletionNote({ round }) {
+  if (!round.wasTerminated) return null;
+  return <>
+    <p className='round-completion-note'>Ended early · {round.total} submitted {round.total === 1 ? 'answer' : 'answers'}</p>
+    {round.generationError && <p className='feedback warning' role='alert'>{round.generationError}</p>}
+  </>;
+}
+
 export default function RoundSummaryPanel({
   title = 'Round Summary',
   badgeLabel = '',
@@ -30,9 +38,7 @@ export default function RoundSummaryPanel({
         </h2>
         {badgeLabel && <span className={`mode-pill ${badgeClassName}`}>{badgeLabel}</span>}
       </div>
-      {round.wasTerminated && (
-        <p className='round-completion-note'>Ended early · {round.total} submitted {round.total === 1 ? 'answer' : 'answers'}</p>
-      )}
+      <RoundCompletionNote round={round} />
       <div className='summary-grid'>
         <article>
           <h3>Accuracy</h3>

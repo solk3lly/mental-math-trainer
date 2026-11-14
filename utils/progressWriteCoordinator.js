@@ -1,5 +1,15 @@
 import { readStorageJson, writeStorageJson } from './browserStorage.js';
 
+export const STALE_PROGRESS_WRITE = 'MM001';
+const serverGenerations = new Map();
+
+export async function getAccountProgressGeneration(client, userId) {
+  const { data, error } = await client.rpc('get_account_progress_generation', { expected_user_id: userId });
+  if (error) throw error;
+  rememberServerGeneration(userId, data);
+  return String(data);
+}
+
 // Web Locks order writes and resets across tabs; storage invalidates queued rows.
 const accounts = new Map();
 const buffers = new Set();
@@ -30,10 +40,10 @@ export function registerProgressBuffer(discard) {
 
 export function withAccountProgressWrite(userId, work, generation = getProgressWriteGeneration(userId)) {
   const state = accountState(userId);
-  const write = (state.reset || Promise.resolve()).then(() => {
+  const write = (state.reset?.catch(() => {}) || Promise.resolve()).then(() => {
     return locked(userId, 'shared', () => {
       // A reset in another tab may have completed while this writer waited.
-      if (generation !== getProgressWriteGeneration(userId)) return;
+      if (generation !== null && generation !== getProgressWriteGeneration(userId)) return;
       return work();
     });
   });
@@ -43,19 +53,53 @@ export function withAccountProgressWrite(userId, work, generation = getProgressW
   return write;
 }
 
-export function resetAccountProgress(userId, work) {
+export async function writeBufferedProgress(rows, isCurrent, write) {
+  const accounts = new Map();
+  for (const row of rows) {
+    if (!accounts.has(row.user_id)) accounts.set(row.user_id, []);
+    accounts.get(row.user_id).push(row);
+  }
+  for (const [userId, batch] of accounts) {
+    await withAccountProgressWrite(userId, () => {
+      return write(batch.filter(isCurrent));
+    }, null);
+  }
+}
+
+export function resetAccountProgress(userId, work, afterReset) {
   const state = accountState(userId);
   if (state.reset) return state.reset;
-  state.generation += 1;
   const precedingWrites = [...state.writes];
-  const durableWrites = [...buffers].map(discard => discard(userId));
-  const reset = Promise.allSettled([...precedingWrites, ...durableWrites])
-    .then(() => locked(userId, 'exclusive', () => {
+  const reset = Promise.allSettled(precedingWrites)
+    .then(() => locked(userId, 'exclusive', async () => {
+      const result = await work();
+      state.generation += 1;
       const resetId = globalThis.crypto?.randomUUID?.() || `${Date.now()}:${Math.random()}`;
       writeStorageJson(`mathtrainer:progress-reset:${userId}`, resetId);
-      return work();
+      if (result !== undefined) rememberServerGeneration(userId, result);
+      await Promise.allSettled([...buffers].map(discard => discard(userId)));
+      await afterReset?.(result);
+      return result;
     }))
     .finally(() => { if (state.reset === reset) state.reset = null; });
   state.reset = reset;
   return reset;
+}
+
+export function assertProgressRoundCurrent(round, userId) {
+  if (!isProgressRowCurrent({ user_id: userId, reset_generation: round.resetGeneration }, round.writeGeneration)) {
+    throw new Error('Account progress was reset during this round. Start a new round.');
+  }
+}
+
+function rememberServerGeneration(userId, generation) {
+  serverGenerations.set(userId, { generation: String(generation), local: getProgressWriteGeneration(userId) });
+}
+
+export function isProgressRowCurrent(row, queuedGeneration) {
+  const local = getProgressWriteGeneration(row.user_id);
+  const server = serverGenerations.get(row.user_id);
+  if (row.reset_generation === undefined || !server) return queuedGeneration === local;
+  if (server.local !== local) return false;
+  return String(row.reset_generation) === server.generation;
 }

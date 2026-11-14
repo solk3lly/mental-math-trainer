@@ -3,7 +3,7 @@ import {
   getPendingAccountProgressRows,
   queueAccountProgressRow
 } from './progressStorage.js';
-import { getProgressWriteGeneration, registerProgressBuffer, withAccountProgressWrite } from './progressWriteCoordinator.js';
+import { getProgressWriteGeneration, isProgressRowCurrent, registerProgressBuffer, writeBufferedProgress } from './progressWriteCoordinator.js';
 
 export const PROGRESS_LOG_INSERT_BATCH_SIZE = 500;
 export const PROGRESS_LOG_FETCH_PAGE_SIZE = 1000;
@@ -357,7 +357,7 @@ export function createProgressLogBuffer({
   let durableWrites = Promise.resolve();
   const generations = new WeakMap();
   const nonDurableRows = new WeakSet();
-  const isCurrent = row => generations.get(row) === getProgressWriteGeneration(row.user_id);
+  const isCurrent = row => isProgressRowCurrent(row, generations.get(row));
 
   const retainedRows = async rows => {
     const current = rows.filter(isCurrent);
@@ -394,11 +394,10 @@ export function createProgressLogBuffer({
       return false;
     }
 
-    const generation = generations.get(rows[0]);
-    void withAccountProgressWrite(rows[0].user_id, async () => {
-      const retained = await retainedRows(rows);
+    void writeBufferedProgress(rows, isCurrent, async current => {
+      const retained = await retainedRows(current);
       return persistProgressLogRowsKeepalive(retained, { accessToken, restConfig, fetchImpl });
-    }, generation).catch(() => {});
+    }).catch(() => {});
 
     return true;
   };
@@ -441,14 +440,14 @@ export function createProgressLogBuffer({
         }
 
         try {
-          await withAccountProgressWrite(snapshot[0].user_id, async () => {
-            const retained = await retainedRows(snapshot);
+          await writeBufferedProgress(snapshot, isCurrent, async current => {
+            const retained = await retainedRows(current);
             await persistProgressLogBatches(client, retained, batchSize);
             if (typeof indexedDB !== 'undefined') {
               await acknowledgeAccountProgressRows(retained).catch(() => {});
             }
             flushedCount += retained.length;
-          }, generations.get(snapshot[0]));
+          });
         } catch (error) {
           pendingRows = [...snapshot.filter(isCurrent), ...pendingRows];
           throw error;
@@ -494,7 +493,7 @@ export function createProgressLogBuffer({
   };
 
   const unregister = registerProgressBuffer(userId => {
-    pendingRows = pendingRows.filter(row => row.user_id !== userId);
+    pendingRows = pendingRows.filter(row => row.user_id !== userId || isCurrent(row));
     if (!pendingRows.length) cancelScheduledFlush();
     return durableWrites;
   });
