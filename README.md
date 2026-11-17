@@ -13,7 +13,7 @@ through Supabase when account features are configured.
 - Decimal drills for addition, subtraction, multiplication, and division.
 - Automatic answer checking, keyboard input, and an on-screen keypad.
 - Configurable round length, timer visibility, and digit direction.
-- A fixed Studio layout and 59 color themes, with independent Light, Dark, and
+- A fixed Studio layout and 99 color themes, with independent Light, Dark, and
   system-adaptive display modes.
 - Round summaries with accuracy, correct-answer counts, average response, and total time.
 - Device history and a 90-day Progress view for guests; account progress and
@@ -50,7 +50,7 @@ smaller expression and leaves the trainer responsive.
 
 ## Appearance
 
-Studio is the fixed interface. Open **Utility → Appearance** to choose from 59
+Studio is the fixed interface. Open **Utility → Appearance** to choose from 99
 color themes and Light, Dark, or Adaptive display modes. Appearance reset restores
 Carbon Paper and Adaptive mode.
 

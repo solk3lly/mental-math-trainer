@@ -108,6 +108,49 @@ const ADDED_THEME_COLORS = Object.freeze({
   'crimson-vector': ['#FF7A82', '#C494FF', '#210D12', '#FFF1F2']
 });
 
+const NEW_THEME_COLORS = Object.freeze({
+  'prussian-porcelain': ['#164B68', '#D99045', '#F4F0E6', '#182A32'],
+  'vermilion-atlas': ['#B9382D', '#0B727A', '#FFF4E8', '#32241F'],
+  'aubergine-linen': ['#613758', '#A98A3E', '#F3EDE4', '#2D232A'],
+  'racing-cream': ['#145C43', '#C88A2E', '#F5F1DF', '#1F3027'],
+  'delft-lemon': ['#244CA3', '#D4B02F', '#FAF9ED', '#202E46'],
+  'mulberry-oat': ['#8E2853', '#769A85', '#F5EEE6', '#37262C'],
+  'espresso-blue': ['#65402D', '#749BAE', '#F1E9DD', '#2D2927'],
+  'rust-pool': ['#A94E34', '#4B9DAD', '#F5F0E6', '#302A28'],
+  'olive-persimmon': ['#68733B', '#CD633C', '#F5F1DE', '#303124'],
+  'garnet-glacier': ['#962F46', '#4E8DAD', '#EAF1F5', '#2A2835'],
+  'electric-parchment': ['#4247C7', '#B2C644', '#F7F0DC', '#2B293A'],
+  'petal-cobalt': ['#235AA6', '#BB6893', '#F5E8EF', '#30283A'],
+  'moss-pearl': ['#386B56', '#9984B2', '#EEEEE7', '#26352D'],
+  'turmeric-denim': ['#A56717', '#3D658C', '#F5EAD0', '#393023'],
+  'orchid-mineral': ['#86518E', '#6C928F', '#EBF1EF', '#302C39'],
+  'petrol-peach': ['#1E6470', '#C68168', '#F9E4DA', '#2A3234'],
+  'cranberry-butter': ['#A13155', '#9B9E55', '#F8F0CF', '#38272B'],
+  'ultramarine-shell': ['#313BA0', '#BB7B4E', '#F2EDEB', '#292941'],
+  'fir-lilac': ['#285A46', '#956AB5', '#EDE7F5', '#292E36'],
+  'graphite-melon': ['#454D54', '#CA6B4D', '#FAEEE5', '#252B30'],
+  'bordeaux-ice': ['#8FCEDD', '#EAA28F', '#291924', '#F8EBF1'],
+  'oxide-lagoon': ['#F2B66F', '#8ECAB5', '#18302F', '#F0F4E9'],
+  'cobalt-citron': ['#E6DF75', '#C5B7E4', '#182C58', '#F4F1E8'],
+  'aubergine-chartreuse': ['#CBDD75', '#DFA9CC', '#302036', '#F6F0E9'],
+  'walnut-glacier': ['#9DD2E0', '#E7B880', '#302622', '#F5EEE3'],
+  'petrol-tangerine': ['#FFAF74', '#B3CC91', '#15323E', '#F1F3EA'],
+  'navy-camellia': ['#FFA8BD', '#A4D8C4', '#17233A', '#F5F0F4'],
+  'pine-champagne': ['#E8CE9D', '#B6B8DA', '#1D3027', '#F2F1E7'],
+  'indigo-copper': ['#E9A17C', '#9DD4D6', '#24243D', '#F6EFEB'],
+  'damson-celadon': ['#B6D8B0', '#EDC3A4', '#332333', '#F5EFEA'],
+  'slate-persimmon': ['#F3AC88', '#C7D5A1', '#29343B', '#F3F3EA'],
+  'mahogany-opal': ['#9CDBCA', '#E9B8CA', '#34201F', '#FAF0E6'],
+  'evergreen-fuchsia': ['#F2A6D5', '#D3D99A', '#17352F', '#F0F5EA'],
+  'ink-vermilion': ['#FF9B86', '#E6D398', '#182631', '#F7F1E7'],
+  'blackcurrant-pistachio': ['#D8E39A', '#B4CEE8', '#292137', '#F6F2E6'],
+  'teal-cerise': ['#FFACC4', '#FFD098', '#103238', '#F3F4E8'],
+  'carbon-klein': ['#A8B8FF', '#F5D79A', '#232425', '#F1F1EC'],
+  'umber-wisteria': ['#D4B7EC', '#BFCF95', '#332A22', '#F6EFE5'],
+  'atlantic-marigold': ['#F5D476', '#E5ABC1', '#18313F', '#F2F2E8'],
+  'basalt-guava': ['#F4A28F', '#A6C8B4', '#2B2C30', '#F4EEE9']
+});
+
 const HEX_PATTERN = /^#[0-9A-F]{6}$/;
 const RGBA_PATTERN = /^rgba\((\d+), (\d+), (\d+), (0(?:\.\d+)?|1(?:\.0+)?)\)$/;
 const HEX_TOKEN_KEYS = [
@@ -250,12 +293,12 @@ test('theme catalog keeps carbon-paper as default and follows the approved mood 
   assert.equal(DEFAULT_THEME_KEY, 'carbon-paper');
   assert.deepEqual(
     THEME_OPTIONS.map((theme) => theme.key),
-    APPROVED_THEME_ORDER
+    APPROVED_THEME_ORDER.concat(Object.keys(NEW_THEME_COLORS))
   );
 });
 
-test('theme catalog includes exactly 20 light and 20 dark palette-only additions', () => {
-  assert.equal(THEME_OPTIONS.length, 59);
+test('theme catalog includes 99 themes with 40 light and 40 dark palettes', () => {
+  assert.equal(THEME_OPTIONS.length, 99);
 
   const keys = THEME_OPTIONS.map((theme) => theme.key);
   assert.equal(new Set(keys).size, keys.length);
@@ -269,15 +312,16 @@ test('theme catalog includes exactly 20 light and 20 dark palette-only additions
     THEME_OPTIONS.filter(
       (theme) => theme.collection === THEME_COLLECTIONS.LIGHT
     ).length,
-    20
+    40
   );
   assert.equal(
     THEME_OPTIONS.filter((theme) => theme.collection === THEME_COLLECTIONS.DARK)
       .length,
-    20
+    40
   );
 
-  for (const [key, expectedColors] of Object.entries(ADDED_THEME_COLORS)) {
+  const expectedPalettes = { ...ADDED_THEME_COLORS, ...NEW_THEME_COLORS };
+  for (const [key, expectedColors] of Object.entries(expectedPalettes)) {
     const theme = THEME_OPTIONS.find((option) => option.key === key);
 
     assert.ok(theme, `${key} should be available`);
@@ -359,7 +403,7 @@ test('every generated color token is normalized and mode-complete', () => {
   }
 });
 
-test('all 118 generated theme-mode token sets meet contrast requirements', () => {
+test('all 198 generated theme-mode token sets meet contrast requirements', () => {
   const contentSurfaceKeys = [
     'paper',
     'paperStrong',

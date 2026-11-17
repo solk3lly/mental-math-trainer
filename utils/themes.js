@@ -404,6 +404,286 @@ const RAW_THEMES = [
     collection: THEME_COLLECTIONS.DARK,
     vibe: 'Crimson direction and violet depth in a focused dark field.',
     colors: ['#FF7A82', '#C494FF', '#210D12', '#FFF1F2']
+  },
+  {
+    key: 'prussian-porcelain',
+    name: 'Prussian Porcelain',
+    collection: THEME_COLLECTIONS.LIGHT,
+    vibe: 'Inky blue and brass on warm porcelain; quiet, scholarly focus.',
+    colors: ['#164B68', '#D99045', '#F4F0E6', '#182A32']
+  },
+  {
+    key: 'vermilion-atlas',
+    name: 'Vermilion Atlas',
+    collection: THEME_COLLECTIONS.LIGHT,
+    vibe: 'Vermilion and petrol teal on ivory; lively contrast with an editorial feel.',
+    colors: ['#B9382D', '#0B727A', '#FFF4E8', '#32241F']
+  },
+  {
+    key: 'aubergine-linen',
+    name: 'Aubergine Linen',
+    collection: THEME_COLLECTIONS.LIGHT,
+    vibe: 'Aubergine, antique gold and linen; composed and slightly luxurious.',
+    colors: ['#613758', '#A98A3E', '#F3EDE4', '#2D232A']
+  },
+  {
+    key: 'racing-cream',
+    name: 'Racing Cream',
+    collection: THEME_COLLECTIONS.LIGHT,
+    vibe: 'Racing green and caramel on cream; traditional, grounded and crisp.',
+    colors: ['#145C43', '#C88A2E', '#F5F1DF', '#1F3027']
+  },
+  {
+    key: 'delft-lemon',
+    name: 'Delft Lemon',
+    collection: THEME_COLLECTIONS.LIGHT,
+    vibe: 'Ceramic blue and lemon gold; sunny accents within a precise blue structure.',
+    colors: ['#244CA3', '#D4B02F', '#FAF9ED', '#202E46']
+  },
+  {
+    key: 'mulberry-oat',
+    name: 'Mulberry Oat',
+    collection: THEME_COLLECTIONS.LIGHT,
+    vibe: 'Mulberry and muted eucalyptus on oat paper; warm, tactile and settled.',
+    colors: ['#8E2853', '#769A85', '#F5EEE6', '#37262C']
+  },
+  {
+    key: 'espresso-blue',
+    name: 'Espresso Blue',
+    collection: THEME_COLLECTIONS.LIGHT,
+    vibe: 'Espresso brown and dusty blue on biscuit; a restrained cafe notebook.',
+    colors: ['#65402D', '#749BAE', '#F1E9DD', '#2D2927']
+  },
+  {
+    key: 'rust-pool',
+    name: 'Rust Pool',
+    collection: THEME_COLLECTIONS.LIGHT,
+    vibe: 'Burnt clay and pool blue on warm stone; earthy with a cool counterpoint.',
+    colors: ['#A94E34', '#4B9DAD', '#F5F0E6', '#302A28']
+  },
+  {
+    key: 'olive-persimmon',
+    name: 'Olive Persimmon',
+    collection: THEME_COLLECTIONS.LIGHT,
+    vibe: 'Olive and persimmon on pale straw; retro warmth with botanical restraint.',
+    colors: ['#68733B', '#CD633C', '#F5F1DE', '#303124']
+  },
+  {
+    key: 'garnet-glacier',
+    name: 'Garnet Glacier',
+    collection: THEME_COLLECTIONS.LIGHT,
+    vibe: 'Garnet and glacial blue on cool mist; jewel accents with a clear, cool base.',
+    colors: ['#962F46', '#4E8DAD', '#EAF1F5', '#2A2835']
+  },
+  {
+    key: 'electric-parchment',
+    name: 'Electric Parchment',
+    collection: THEME_COLLECTIONS.LIGHT,
+    vibe: 'Electric indigo and citron on parchment; contemporary energy on old paper.',
+    colors: ['#4247C7', '#B2C644', '#F7F0DC', '#2B293A']
+  },
+  {
+    key: 'petal-cobalt',
+    name: 'Petal Cobalt',
+    collection: THEME_COLLECTIONS.LIGHT,
+    vibe: 'Cobalt and dusty orchid on pale rose; a decisive blue with a softer setting.',
+    colors: ['#235AA6', '#BB6893', '#F5E8EF', '#30283A']
+  },
+  {
+    key: 'moss-pearl',
+    name: 'Moss Pearl',
+    collection: THEME_COLLECTIONS.LIGHT,
+    vibe: 'Deep moss and muted lilac on pearl grey; low saturation, quiet concentration.',
+    colors: ['#386B56', '#9984B2', '#EEEEE7', '#26352D']
+  },
+  {
+    key: 'turmeric-denim',
+    name: 'Turmeric Denim',
+    collection: THEME_COLLECTIONS.LIGHT,
+    vibe: 'Ochre and denim on toasted cream; familiar, practical and warmly retro.',
+    colors: ['#A56717', '#3D658C', '#F5EAD0', '#393023']
+  },
+  {
+    key: 'orchid-mineral',
+    name: 'Orchid Mineral',
+    collection: THEME_COLLECTIONS.LIGHT,
+    vibe: 'Muted orchid and mineral green on pale stone; cool and quietly expressive.',
+    colors: ['#86518E', '#6C928F', '#EBF1EF', '#302C39']
+  },
+  {
+    key: 'petrol-peach',
+    name: 'Petrol Peach',
+    collection: THEME_COLLECTIONS.LIGHT,
+    vibe: 'Deep petrol and copper on peach paper; cool controls within a warm canvas.',
+    colors: ['#1E6470', '#C68168', '#F9E4DA', '#2A3234']
+  },
+  {
+    key: 'cranberry-butter',
+    name: 'Cranberry Butter',
+    collection: THEME_COLLECTIONS.LIGHT,
+    vibe: 'Cranberry and olive gold on butter yellow; bright, nostalgic stationery.',
+    colors: ['#A13155', '#9B9E55', '#F8F0CF', '#38272B']
+  },
+  {
+    key: 'ultramarine-shell',
+    name: 'Ultramarine Shell',
+    collection: THEME_COLLECTIONS.LIGHT,
+    vibe: 'Ultramarine and saddle tan on pale shell; graphic clarity with a warm edge.',
+    colors: ['#313BA0', '#BB7B4E', '#F2EDEB', '#292941']
+  },
+  {
+    key: 'fir-lilac',
+    name: 'Fir Lilac',
+    collection: THEME_COLLECTIONS.LIGHT,
+    vibe: 'Fir green and violet on lilac paper; an unusual botanical study palette.',
+    colors: ['#285A46', '#956AB5', '#EDE7F5', '#292E36']
+  },
+  {
+    key: 'graphite-melon',
+    name: 'Graphite Melon',
+    collection: THEME_COLLECTIONS.LIGHT,
+    vibe: 'Graphite and muted melon on peach cream; minimal structure with one warm note.',
+    colors: ['#454D54', '#CA6B4D', '#FAEEE5', '#252B30']
+  },
+  {
+    key: 'bordeaux-ice',
+    name: 'Bordeaux Ice',
+    collection: THEME_COLLECTIONS.DARK,
+    vibe: 'Icy cyan and salmon over deep bordeaux; cool signals on a wine-toned base.',
+    colors: ['#8FCEDD', '#EAA28F', '#291924', '#F8EBF1']
+  },
+  {
+    key: 'oxide-lagoon',
+    name: 'Oxide Lagoon',
+    collection: THEME_COLLECTIONS.DARK,
+    vibe: 'Apricot gold and seafoam over deep lagoon; weathered metal and water.',
+    colors: ['#F2B66F', '#8ECAB5', '#18302F', '#F0F4E9']
+  },
+  {
+    key: 'cobalt-citron',
+    name: 'Cobalt Citron',
+    collection: THEME_COLLECTIONS.DARK,
+    vibe: 'Citron and lavender over saturated cobalt; bold color without a neon base.',
+    colors: ['#E6DF75', '#C5B7E4', '#182C58', '#F4F1E8']
+  },
+  {
+    key: 'aubergine-chartreuse',
+    name: 'Aubergine Chartreuse',
+    collection: THEME_COLLECTIONS.DARK,
+    vibe: 'Chartreuse and dusty pink over aubergine; sharp accents within a soft purple field.',
+    colors: ['#CBDD75', '#DFA9CC', '#302036', '#F6F0E9']
+  },
+  {
+    key: 'walnut-glacier',
+    name: 'Walnut Glacier',
+    collection: THEME_COLLECTIONS.DARK,
+    vibe: 'Glacial blue and amber over walnut; cool precision against warm wood.',
+    colors: ['#9DD2E0', '#E7B880', '#302622', '#F5EEE3']
+  },
+  {
+    key: 'petrol-tangerine',
+    name: 'Petrol Tangerine',
+    collection: THEME_COLLECTIONS.DARK,
+    vibe: 'Tangerine and pale olive over petrol blue; energetic but grounded.',
+    colors: ['#FFAF74', '#B3CC91', '#15323E', '#F1F3EA']
+  },
+  {
+    key: 'navy-camellia',
+    name: 'Navy Camellia',
+    collection: THEME_COLLECTIONS.DARK,
+    vibe: 'Camellia pink and pale jade over navy; playful accents with a formal foundation.',
+    colors: ['#FFA8BD', '#A4D8C4', '#17233A', '#F5F0F4']
+  },
+  {
+    key: 'pine-champagne',
+    name: 'Pine Champagne',
+    collection: THEME_COLLECTIONS.DARK,
+    vibe: 'Champagne gold and silver lilac over pine; muted, warm and considered.',
+    colors: ['#E8CE9D', '#B6B8DA', '#1D3027', '#F2F1E7']
+  },
+  {
+    key: 'indigo-copper',
+    name: 'Indigo Copper',
+    collection: THEME_COLLECTIONS.DARK,
+    vibe: 'Soft copper and pale cyan over smoky indigo; warm emphasis on a cool base.',
+    colors: ['#E9A17C', '#9DD4D6', '#24243D', '#F6EFEB']
+  },
+  {
+    key: 'damson-celadon',
+    name: 'Damson Celadon',
+    collection: THEME_COLLECTIONS.DARK,
+    vibe: 'Celadon and peach over damson; ceramic softness with plum depth.',
+    colors: ['#B6D8B0', '#EDC3A4', '#332333', '#F5EFEA']
+  },
+  {
+    key: 'slate-persimmon',
+    name: 'Slate Persimmon',
+    collection: THEME_COLLECTIONS.DARK,
+    vibe: 'Persimmon and pale sage over blue slate; warm highlights within a practical grey.',
+    colors: ['#F3AC88', '#C7D5A1', '#29343B', '#F3F3EA']
+  },
+  {
+    key: 'mahogany-opal',
+    name: 'Mahogany Opal',
+    collection: THEME_COLLECTIONS.DARK,
+    vibe: 'Opal green and pearl pink over mahogany; soft jewel colors on a rich brown base.',
+    colors: ['#9CDBCA', '#E9B8CA', '#34201F', '#FAF0E6']
+  },
+  {
+    key: 'evergreen-fuchsia',
+    name: 'Evergreen Fuchsia',
+    collection: THEME_COLLECTIONS.DARK,
+    vibe: 'Fuchsia and pale citron over evergreen; lively botanical contrast.',
+    colors: ['#F2A6D5', '#D3D99A', '#17352F', '#F0F5EA']
+  },
+  {
+    key: 'ink-vermilion',
+    name: 'Ink Vermilion',
+    collection: THEME_COLLECTIONS.DARK,
+    vibe: 'Soft vermilion and muted gold over blue ink; confident editorial emphasis.',
+    colors: ['#FF9B86', '#E6D398', '#182631', '#F7F1E7']
+  },
+  {
+    key: 'blackcurrant-pistachio',
+    name: 'Blackcurrant Pistachio',
+    collection: THEME_COLLECTIONS.DARK,
+    vibe: 'Pistachio and powder blue over blackcurrant; fresh accents on smoky purple.',
+    colors: ['#D8E39A', '#B4CEE8', '#292137', '#F6F2E6']
+  },
+  {
+    key: 'teal-cerise',
+    name: 'Teal Cerise',
+    collection: THEME_COLLECTIONS.DARK,
+    vibe: 'Cerise and apricot over deep teal; cheerful contrast with a substantial base.',
+    colors: ['#FFACC4', '#FFD098', '#103238', '#F3F4E8']
+  },
+  {
+    key: 'carbon-klein',
+    name: 'Carbon Klein',
+    collection: THEME_COLLECTIONS.DARK,
+    vibe: 'Periwinkle blue and pale gold over neutral carbon; restrained technical color.',
+    colors: ['#A8B8FF', '#F5D79A', '#232425', '#F1F1EC']
+  },
+  {
+    key: 'umber-wisteria',
+    name: 'Umber Wisteria',
+    collection: THEME_COLLECTIONS.DARK,
+    vibe: 'Wisteria and sage over raw umber; dusty botanical tones with earthy warmth.',
+    colors: ['#D4B7EC', '#BFCF95', '#332A22', '#F6EFE5']
+  },
+  {
+    key: 'atlantic-marigold',
+    name: 'Atlantic Marigold',
+    collection: THEME_COLLECTIONS.DARK,
+    vibe: 'Marigold and dusty rose over Atlantic blue; sunny signals against ocean depth.',
+    colors: ['#F5D476', '#E5ABC1', '#18313F', '#F2F2E8']
+  },
+  {
+    key: 'basalt-guava',
+    name: 'Basalt Guava',
+    collection: THEME_COLLECTIONS.DARK,
+    vibe: 'Guava and eucalyptus over basalt; subdued grey with friendly warm accents.',
+    colors: ['#F4A28F', '#A6C8B4', '#2B2C30', '#F4EEE9']
   }
 ];
 
@@ -580,8 +860,13 @@ function minimumContrast(foregroundHex, backgroundHexes) {
 function pickTextColor(backgroundHexes, candidates) {
   const backgrounds = backgroundHexes.map(normalizeHex);
   const normalizedCandidates = [...new Set(candidates.map(normalizeHex))];
+  const textCandidates = normalizedCandidates.some(
+    (candidate) => minimumContrast(candidate, backgrounds) >= 4.5
+  )
+    ? normalizedCandidates
+    : [...normalizedCandidates, '#000000', '#FFFFFF'];
 
-  return normalizedCandidates.reduce((bestCandidate, candidate) =>
+  return textCandidates.reduce((bestCandidate, candidate) =>
     minimumContrast(candidate, backgrounds) >
     minimumContrast(bestCandidate, backgrounds)
       ? candidate
