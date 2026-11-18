@@ -250,6 +250,7 @@ input[aria-invalid='true'], select[aria-invalid='true'] { border-color: var(--te
 .feedback.success { background: var(--surface-positive); border-color: var(--text-accent); }
 .feedback.neutral { background: var(--surface-raised); }
 .feedback.warning { background: var(--surface-warning); }
+.settings-save-feedback { position: fixed; inset-inline: var(--gutter); bottom: var(--space-4); width: fit-content; margin-inline: auto; z-index: var(--layer-header); box-shadow: var(--surface-shadow-soft); pointer-events: none; }
 .inline-actions, .summary-actions, .stats-actions, .panel-header-actions, .verify-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); }
 .inline-actions { margin-top: var(--space-4); }
 .trainer-toggle-row { padding-top: var(--space-4); border-top: var(--rule); }

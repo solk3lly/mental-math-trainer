@@ -117,20 +117,24 @@ authenticated role access to the web preference and progress tables. This works
 with Supabase automatic table exposure disabled. Row policies still govern which
 rows the signed-in account can access.
 
-The selectable interface feature has been removed. Deploy this web code before
-applying `20261114020000_remove_interface_style.sql`, which drops only the retired
-`user_preferences.interface_style` column. Theme, display mode, trainer settings,
-accounts, and progress remain intact. Older clients that still select the removed
-column must refresh or update after that migration.
+Deploy the Studio-only web client before applying
+`20261114020000_remove_interface_style.sql`, which drops the retired
+`user_preferences.interface_style` column. If your backend also serves Android
+1.0.5, defer this column drop until users can install a compatible Android
+release. The installed 1.0.5 app selects the column when reading preferences.
 
 Apply the November 14 migrations before serving this web version:
 
 - `20261114000000_reset_account_progress.sql` adds atomic account resets and a
-  generation checked on every progress insert. Older clients can save until the
-  first reset; afterward they must refresh to obtain the new generation.
+  generation checked on every progress insert. Android 1.0.5 omits the generation
+  and loses cloud write access for an account after its first reset. Coordinate
+  the reset rollout with a compatible release if both clients share a backend.
 - `20261114010000_schedule_progress_retention.sql` requires `pg_cron` and schedules
   deletion of account answers older than 90 days, hourly at minute 17. Confirm the
   named job `mental-math-progress-retention` is active and inspect its run history.
+
+Apply `20261118000000_record_mixed_progress_mode.sql` before deploying this
+version so new Mixed rounds and imported Mixed history retain their mode label.
 
 The retention job runs as the migration owner. For a self-hosted database, arrange
 `pg_cron` support before applying that migration. See the
@@ -156,12 +160,16 @@ delivery and verify the reset-link flow. Users request a link at
 ## Android release
 
 The GitHub-distributed Android app has a separate native packaging source archive.
-The signed [Android 1.0.5 release](https://github.com/prezvious/mental-math-trainer/releases/tag/android-v1.0.5)
+The signed [Android 1.0.5 release](https://github.com/solk3lly/mental-math-trainer/releases/tag/android-v1.0.5)
 includes the Android 10 updater compatibility fix, update manifest, and full source
 archive. See [updater compatibility and recovery](docs/android-update-compatibility.md)
-for the cause, instructions, and verification limits. If the old updater rejects
-the APK, install the downloaded 1.0.5 APK manually over the existing app once.
-Do not uninstall or clear storage.
+for the Android 10 compatibility issue. If an earlier updater rejects 1.0.5,
+install the downloaded 1.0.5 APK over the existing app to keep device data.
+
+The updater in 1.0.5 uses the former repository path and can fail to check for
+updates. The [updater source patch](docs/android-1.0.5-updater.patch) applies to
+the published 1.0.5 source archive. Install the next compatible signed APK from
+the release page over the existing app when it is available.
 
 ## Tech Stack
 

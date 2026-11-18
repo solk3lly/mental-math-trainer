@@ -60,7 +60,7 @@ function StatsContent({ auth }) {
               <h2>Save this device history to your account?</h2>
               <p>{importOffer.sessions.length} {importOffer.sessions.length === 1 ? 'session' : 'sessions'} and {importOffer.attempts.length} submitted answers can be imported to {user.email}. Nothing is uploaded until you choose Import.</p>
               <div className='inline-actions'>
-                <button type='button' className='button button-strong' onClick={() => void handleImport()} disabled={isImporting}>
+                <button type='button' className='button button-strong' onClick={() => void handleImport()} disabled={isImporting || isResetting}>
                   {isImporting ? 'Importing…' : 'Import history'}
                 </button>
                 <button type='button' className='button button-quiet' onClick={() => setImportDismissed(true)} disabled={isImporting}>Not now</button>

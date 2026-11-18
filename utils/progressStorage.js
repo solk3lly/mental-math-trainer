@@ -200,6 +200,25 @@ export async function getGuestHistory() {
   };
 }
 
+export async function getGuestSessionForImport(sessionId) {
+  const database = await openDatabase();
+  const transaction = database.transaction([SESSION_STORE, ATTEMPT_STORE], 'readonly');
+  const done = transactionComplete(transaction);
+  const [session, attempts] = await Promise.all([
+    requestResult(transaction.objectStore(SESSION_STORE).get(sessionId)),
+    requestResult(transaction.objectStore(ATTEMPT_STORE).index('sessionId').getAll(sessionId))
+  ]);
+  await done;
+  const cutoff = Date.now() - DEVICE_HISTORY_DAYS * DAY_MS;
+  if (session?.owner !== 'guest' || session.importedTo) return null;
+  if (new Date(session.updatedAt).getTime() < cutoff) return null;
+  return {
+    kind: session.kind,
+    attempts: attempts.filter(attempt => new Date(attempt.createdAt).getTime() >= cutoff)
+      .sort((a, b) => a.questionIndex - b.questionIndex)
+  };
+}
+
 export async function touchGuestSession(sessionId) {
   const database = await openDatabase();
   const transaction = database.transaction(SESSION_STORE, 'readwrite');
@@ -314,15 +333,17 @@ export async function clearGuestHistory() {
 
 export async function markGuestSessionImported(sessionId, userId) {
   const database = await openDatabase();
-  const transaction = database.transaction(SESSION_STORE, 'readwrite');
+  const transaction = database.transaction([SESSION_STORE, ATTEMPT_STORE], 'readwrite');
   const done = transactionComplete(transaction);
   const sessions = transaction.objectStore(SESSION_STORE);
   const session = await requestResult(sessions.get(sessionId));
   if (session && !session.importedTo && session.importOwnerId === userId) {
     sessions.put({ ...session, importedTo: userId });
+    const attempts = transaction.objectStore(ATTEMPT_STORE);
+    const keys = await requestResult(attempts.index('sessionId').getAllKeys(sessionId));
+    for (const key of keys) attempts.delete(key);
   }
   await done;
-  await pruneGuestHistory();
 }
 
 export async function claimGuestSessionImport(sessionId, userId, generation = '0') {
@@ -353,7 +374,8 @@ async function claimInactiveGuestSession(sessionId, userId, generation) {
 }
 
 function accountRowKey(row) {
-  return `${row.user_id}:${row.session_id}:${row.question_index}`;
+  const accountKey = `${row.user_id}:${row.session_id}:${row.question_index}`;
+  return row.source_kind ? `ai:${accountKey}` : accountKey;
 }
 
 export async function queueAccountProgressRow(row) {
@@ -414,8 +436,9 @@ export async function clearPendingAccountProgressRows(userId, generation) {
   const done = transactionComplete(transaction);
   const queue = transaction.objectStore(ACCOUNT_QUEUE_STORE);
   const entries = await requestResult(queue.index('userId').getAll(userId));
+  const cutoff = generation === undefined ? null : BigInt(generation);
   for (const { key, row } of entries) {
-    if (generation === undefined || String(row.reset_generation ?? 0) !== generation) queue.delete(key);
+    if (cutoff === null || BigInt(row.reset_generation ?? 0) < cutoff) queue.delete(key);
   }
   await done;
 }

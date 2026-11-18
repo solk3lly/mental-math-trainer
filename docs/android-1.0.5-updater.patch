@@ -1,0 +1,300 @@
+--- a/android/app/src/androidTest/assets/trusted-candidate.json
++++ b/android/app/src/androidTest/assets/trusted-candidate.json
+@@ -1,5 +1,5 @@
+ {
+-  "url": "https://github.com/prezvious/mental-math-trainer/releases/download/android-v0.0.0/Mental-Math-Trainer-0.0.0.apk",
++  "url": "https://github.com/solk3lly/mental-math-trainer/releases/download/android-v0.0.0/Mental-Math-Trainer-0.0.0.apk",
+   "size": 8538,
+   "sha256": "7079e7ae47c8787ba8fadebb4c3e77b992f2a5a0f0309f83489039797bb19840",
+   "versionCode": 7
+--- a/android/app/src/androidTest/assets/wrong-signer.json
++++ b/android/app/src/androidTest/assets/wrong-signer.json
+@@ -1,5 +1,5 @@
+ {
+-  "url": "https://github.com/prezvious/mental-math-trainer/releases/download/android-v0.0.0/Mental-Math-Trainer-0.0.0.apk",
++  "url": "https://github.com/solk3lly/mental-math-trainer/releases/download/android-v0.0.0/Mental-Math-Trainer-0.0.0.apk",
+   "size": 8538,
+   "sha256": "273604bab338d2a8f7963f371c0e9a14c29e887536aac5177fd4d942a98fe33c",
+   "versionCode": 7
+--- a/android/app/src/main/java/com/prezvious/mentalmathtrainer/UpdatePolicy.java
++++ b/android/app/src/main/java/com/prezvious/mentalmathtrainer/UpdatePolicy.java
+@@ -10,7 +10,7 @@
+ /** Update trust boundaries, independent of Android and network availability. */
+ final class UpdatePolicy {
+     static final long MAX_APK_BYTES = 100_000_000L;
+-    private static final String PREFIX = "/prezvious/mental-math-trainer/releases/download/";
++    private static final String PREFIX = "/solk3lly/mental-math-trainer/releases/download/";
+ 
+     private static URI httpsUri(String value) {
+         try {
+@@ -27,9 +27,10 @@
+ 
+     static void requireJsonUrl(String value) {
+         URI uri = httpsUri(value);
++        String query = String.valueOf(uri.getRawQuery());
+         if ("api.github.com".equals(uri.getHost()) &&
+-            "/repos/prezvious/mental-math-trainer/releases".equals(uri.getRawPath()) &&
+-            "per_page=20".equals(uri.getRawQuery())) return;
++            "/repositories/1159156309/releases".equals(uri.getRawPath()) &&
++            query.matches("per_page=20(&page=[1-9][0-9]*)?")) return;
+         requireReleasePath(uri, "android-update\\.json");
+     }
+ 
+--- a/android/app/src/test/java/com/prezvious/mentalmathtrainer/UpdatePolicyTest.java
++++ b/android/app/src/test/java/com/prezvious/mentalmathtrainer/UpdatePolicyTest.java
+@@ -6,19 +6,20 @@
+ import static org.junit.Assert.*;
+ 
+ public class UpdatePolicyTest {
+-    private static final String ROOT = "https://github.com/prezvious/mental-math-trainer/releases/download/android-v1.0.3/";
++    private static final String ROOT = "https://github.com/solk3lly/mental-math-trainer/releases/download/android-v1.0.3/";
+ 
+     @Test public void onlyTheConfiguredReleaseEndpointsAreAccepted() throws Exception {
+-        UpdatePolicy.requireJsonUrl("https://api.github.com/repos/prezvious/mental-math-trainer/releases?per_page=20");
++        UpdatePolicy.requireJsonUrl("https://api.github.com/repositories/1159156309/releases?per_page=20");
++        UpdatePolicy.requireJsonUrl("https://api.github.com/repositories/1159156309/releases?per_page=20&page=2");
+         UpdatePolicy.requireJsonUrl(ROOT + "android-update.json");
+         UpdatePolicy.requireApkUrl(ROOT + "Mental-Math-Trainer-1.0.3.apk");
+         for (String url : new String[]{
+-            "http://github.com/prezvious/mental-math-trainer/releases/download/android-v1.0.3/a.apk",
+-            "https://github.com.evil.example/prezvious/mental-math-trainer/releases/download/android-v1.0.3/a.apk",
++            "http://github.com/solk3lly/mental-math-trainer/releases/download/android-v1.0.3/a.apk",
++            "https://github.com.evil.example/solk3lly/mental-math-trainer/releases/download/android-v1.0.3/a.apk",
+             "https://github.com/other/repo/releases/download/android-v1.0.3/a.apk",
+             ROOT + "../a.apk", ROOT + "a.apk?token=secret", ROOT + "a.apk#fragment",
+-            "https://user@github.com/prezvious/mental-math-trainer/releases/download/android-v1.0.3/a.apk",
+-            "https://github.com:444/prezvious/mental-math-trainer/releases/download/android-v1.0.3/a.apk"
++            "https://user@github.com/solk3lly/mental-math-trainer/releases/download/android-v1.0.3/a.apk",
++            "https://github.com:444/solk3lly/mental-math-trainer/releases/download/android-v1.0.3/a.apk"
+         }) {
+             assertThrows(IllegalArgumentException.class, () -> UpdatePolicy.requireApkUrl(url));
+         }
+--- a/scripts/prepare-updater-test-fixtures.cjs
++++ b/scripts/prepare-updater-test-fixtures.cjs
+@@ -53,7 +53,7 @@
+     fingerprints.push(fingerprint);
+     const bytes = fs.readFileSync(apk);
+     fs.writeFileSync(path.join(assets, `${name}.json`), JSON.stringify({
+-      url: 'https://github.com/prezvious/mental-math-trainer/releases/download/android-v0.0.0/Mental-Math-Trainer-0.0.0.apk',
++      url: 'https://github.com/solk3lly/mental-math-trainer/releases/download/android-v0.0.0/Mental-Math-Trainer-0.0.0.apk',
+       size: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex'), versionCode
+     }, null, 2) + '\n');
+   }
+--- a/tests/androidUpdates.test.cjs
++++ b/tests/androidUpdates.test.cjs
+@@ -3,11 +3,11 @@
+ const path = require('node:path');
+ const { pathToFileURL } = require('node:url');
+ 
+-let selectAndroidRelease;
++let selectAndroidReleases;
+ let validateAndroidManifest;
+ let createAndroidUpdateManager;
+ let GITHUB_RELEASES_URL;
+-const downloadRoot = 'https://github.com/prezvious/mental-math-trainer/releases/download/android-v1.0.3/';
++const downloadRoot = 'https://github.com/solk3lly/mental-math-trainer/releases/download/android-v1.0.3/';
+ const installed = { id: 'com.prezvious.mentalmathtrainer', versionCode: 3, versionName: '1.0.2', sdk: 36 };
+ 
+ function releaseFixture() {
+@@ -49,18 +49,18 @@
+ }
+ 
+ test.before(async () => {
+-  ({ selectAndroidRelease, validateAndroidManifest, createAndroidUpdateManager, GITHUB_RELEASES_URL } =
++  ({ selectAndroidReleases, validateAndroidManifest, createAndroidUpdateManager, GITHUB_RELEASES_URL } =
+     await import(pathToFileURL(path.resolve(__dirname, '../utils/androidUpdates.js')).href));
+ });
+ 
+ test('selects a published Android release and ignores website, draft and prerelease releases', () => {
+   const { release } = releaseFixture();
+-  assert.equal(selectAndroidRelease([
++  assert.deepEqual(selectAndroidReleases([
+     { ...release, tag_name: 'v9.0.0' }, { ...release, draft: true },
+     { ...release, prerelease: true }, { ...release, assets: [] }, release
+-  ]), release);
+-  assert.equal(selectAndroidRelease([]), null);
+-  assert.throws(() => selectAndroidRelease({ message: 'Unexpected data' }), /release/i);
++  ]), [release]);
++  assert.deepEqual(selectAndroidReleases([]), []);
++  assert.throws(() => selectAndroidReleases({ message: 'Unexpected data' }), /release/i);
+ });
+ 
+ test('a valid manifest identifies a higher compatible APK and plain release notes', () => {
+@@ -96,10 +96,10 @@
+ test('rejects APKs from a different repository, release, host, or insecure URL', () => {
+   const { manifest, release } = releaseFixture();
+   for (const url of [
+-    `http://github.com/prezvious/mental-math-trainer/releases/download/android-v1.0.3/${manifest.apk.name}`,
+-    `https://github.com.evil.example/prezvious/mental-math-trainer/releases/download/android-v1.0.3/${manifest.apk.name}`,
++    `http://github.com/solk3lly/mental-math-trainer/releases/download/android-v1.0.3/${manifest.apk.name}`,
++    `https://github.com.evil.example/solk3lly/mental-math-trainer/releases/download/android-v1.0.3/${manifest.apk.name}`,
+     `https://github.com/other/repo/releases/download/android-v1.0.3/${manifest.apk.name}`,
+-    `https://github.com/prezvious/mental-math-trainer/releases/download/android-v1.0.4/${manifest.apk.name}`
++    `https://github.com/solk3lly/mental-math-trainer/releases/download/android-v1.0.4/${manifest.apk.name}`
+   ]) {
+     const changed = { ...release, assets: release.assets.map((asset) => asset.name.endsWith('.apk') ? { ...asset, browser_download_url: url } : asset) };
+     assert.throws(() => validateAndroidManifest(changed, manifest, installed), /asset|URL/i);
+@@ -216,6 +216,52 @@
+   assert.equal(state.offers.length, 1);
+ });
+ 
++test('checks the stable repository endpoint and uses its current release asset paths', async () => {
++  const { manager, state, native } = managerFixture();
++  const { release, manifest } = releaseFixture();
++  const stableUrl = 'https://api.github.com/repositories/1159156309/releases?per_page=20';
++  native.readReleaseJson = async ({ url }) => {
++    state.requests.push(url);
++    return { status: 200, body: JSON.stringify(url === stableUrl ? [release] : manifest) };
++  };
++  await manager.check();
++  assert.equal(state.requests[0], stableUrl);
++  assert.equal(state.offers[0]?.url, release.assets[1].browser_download_url);
++});
++
++test('selects the highest compatible versionCode across pages after incompatible and incomplete releases', async () => {
++  const { manager, state, native } = managerFixture();
++  const { release, manifest } = releaseFixture();
++  const candidate = (versionName, versionCode, minSdkVersion) => {
++    const tag = `android-v${versionName}`;
++    const name = `Mental-Math-Trainer-${versionName}.apk`;
++    const assets = release.assets.map(asset => ({
++      ...asset,
++      name: asset.name.endsWith('.apk') ? name : asset.name,
++      browser_download_url: asset.browser_download_url.replace(release.tag_name, tag).replace(manifest.apk.name, name)
++    }));
++    return {
++      release: { ...release, tag_name: tag, assets },
++      manifest: { ...manifest, versionName, versionCode, minSdkVersion, apk: { ...manifest.apk, name } }
++    };
++  };
++  const incompatible = candidate('1.1.0', 30, 37);
++  const missing = candidate('1.0.8', 9, 24);
++  const best = candidate('1.0.5', 6, 24);
++  const first = [incompatible.release, missing.release, release,
++    ...Array.from({ length: 17 }, () => ({ ...release, draft: true }))];
++  native.readReleaseJson = async ({ url }) => {
++    state.requests.push(url);
++    if (url === GITHUB_RELEASES_URL) return { status: 200, body: JSON.stringify(first) };
++    if (url === `${GITHUB_RELEASES_URL}&page=2`) return { status: 200, body: JSON.stringify([best.release]) };
++    if (url === missing.release.assets[0].browser_download_url) return { status: 404, body: '' };
++    const match = [incompatible, best, { release, manifest }].find(entry => entry.release.assets[0].browser_download_url === url);
++    return { status: 200, body: JSON.stringify(match.manifest) };
++  };
++  await manager.check();
++  assert.equal(state.offers[0]?.versionCode, 6);
++});
++
+ test('untrusted manifest links are rejected before the native bridge fetches them', async () => {
+   const { manager, state, native } = managerFixture();
+   const { release } = releaseFixture();
+--- a/utils/androidUpdates.js
++++ b/utils/androidUpdates.js
+@@ -1,5 +1,6 @@
+-export const GITHUB_REPOSITORY = 'prezvious/mental-math-trainer';
+-export const GITHUB_RELEASES_URL = `https://api.github.com/repos/${GITHUB_REPOSITORY}/releases?per_page=20`;
++export const GITHUB_REPOSITORY = 'solk3lly/mental-math-trainer';
++const RELEASE_PAGE_SIZE = 20;
++export const GITHUB_RELEASES_URL = `https://api.github.com/repositories/1159156309/releases?per_page=${RELEASE_PAGE_SIZE}`;
+ export const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+ const SNOOZE_MS = 24 * 60 * 60 * 1000;
+ const CHECK_KEY = 'mental-math-android-update-check';
+@@ -15,11 +16,11 @@
+   return matches[0];
+ }
+ 
+-export function selectAndroidRelease(releases) {
++export function selectAndroidReleases(releases) {
+   if (!Array.isArray(releases)) throw new Error('GitHub returned invalid release data.');
+-  return releases.find((release) => release && release.draft === false && release.prerelease === false &&
++  return releases.filter((release) => release && release.draft === false && release.prerelease === false &&
+     /^android-v\d+\.\d+\.\d+$/.test(release.tag_name) && release.published_at &&
+-    Array.isArray(release.assets) && release.assets.some((asset) => asset.name === 'android-update.json')) || null;
++    Array.isArray(release.assets) && release.assets.some((asset) => asset.name === 'android-update.json'));
+ }
+ 
+ export function validateAndroidManifest(release, manifest, installed) {
+@@ -64,13 +65,62 @@
+     if (!disposed) onState(state);
+   };
+ 
+-  async function readJson(url) {
++  async function readJson(url, resource) {
++    const manifest = resource === 'manifest';
+     const response = await native.readReleaseJson({ url });
+-    if (response.status === 403 || response.status === 429) {
++    if ([403, 429].includes(response.status)) {
+       throw new Error('GitHub update checks are temporarily limited. Try again later.');
+     }
++    if (manifest && [404, 410].includes(response.status)) return null;
+     if (response.status !== 200) throw new Error('Could not read the GitHub release. Try again later.');
+-    try { return JSON.parse(response.body); } catch { throw new Error('GitHub returned invalid update details.'); }
++    try {
++      return JSON.parse(response.body);
++    } catch {
++      if (manifest) return null;
++      throw new Error('GitHub returned invalid update details.');
++    }
++  }
++
++  async function readCandidate(release, installed) {
++    let asset;
++    try {
++      asset = releaseAsset(release, 'android-update.json');
++    } catch (error) {
++      return { error };
++    }
++    const manifest = await readJson(asset.browser_download_url, 'manifest');
++    try {
++      return { candidate: validateAndroidManifest(release, manifest, installed) };
++    } catch (error) {
++      return { error };
++    }
++  }
++
++  async function findUpdate(installed) {
++    let update = null;
++    let bestVersion = installed.versionCode;
++    let compatible = false;
++    let invalid = null;
++    for (let page = 1; !disposed; page++) {
++      const listUrl = page === 1 ? GITHUB_RELEASES_URL : `${GITHUB_RELEASES_URL}&page=${page}`;
++      const releases = await readJson(listUrl);
++      for (const release of selectAndroidReleases(releases)) {
++        if (disposed) return { update, compatible };
++        const { candidate, error } = await readCandidate(release, installed);
++        if (error) {
++          invalid ??= error;
++          continue;
++        }
++        compatible = true;
++        if (candidate?.versionCode > bestVersion) {
++          update = candidate;
++          bestVersion = candidate.versionCode;
++        }
++      }
++      if (releases.length < RELEASE_PAGE_SIZE) break;
++    }
++    if (!compatible && invalid) throw invalid;
++    return { update, compatible };
+   }
+ 
+   async function offer({ manual = false } = {}) {
+@@ -119,16 +169,11 @@
+       try {
+         const installed = await native.getInfo();
+         updateState({ versionName: installed.versionName });
+-        const release = selectAndroidRelease(await readJson(GITHUB_RELEASES_URL));
+-        let update = null;
+-        if (release) {
+-          const asset = releaseAsset(release, 'android-update.json');
+-          update = validateAndroidManifest(release, await readJson(asset.browser_download_url), installed);
+-        }
++        const { update, compatible } = await findUpdate(installed);
+         if (disposed) return;
+         updateState({ status: update ? 'available' : 'up-to-date', update, busy: false,
+           message: update ? `Version ${update.versionName} is available.` :
+-            (release ? 'You have the latest version.' : 'No Android update has been published yet.') });
++            (compatible ? 'You have the latest compatible version.' : 'No Android update has been published yet.') });
+         await offer({ manual });
+       } catch (error) {
+         updateState({ status: 'error', busy: false,

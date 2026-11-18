@@ -61,6 +61,22 @@ test('guest dashboard retains exact answer text, original time, and ended state'
   assert.equal(dashboard.recentSessions[0].modeLabel, 'Exponentiation');
 });
 
+test('a guest Mixed round retains its mode when it contains one operation', () => {
+  const dashboard = buildGuestProgressDashboard({
+    sessions: [{ id: 'mixed-round', state: 'ended', kind: 'mixed' }],
+    attempts: [{
+      key: 'mixed-round:1', sessionId: 'mixed-round', questionIndex: 1,
+      createdAt: '2026-09-23T03:00:00.000Z',
+      row: {
+        session_id: 'mixed-round', operation: 'ADDITION', digits_left: 1, digits_right: 1,
+        left_operand: '2', right_operand: '3', correct_answer: '5', submitted_answer: '5',
+        is_correct: true, response_ms: 500
+      }
+    }]
+  });
+  assert.equal(dashboard.recentSessions[0].modeLabel, 'Mixed');
+});
+
 test('mergeProgressEntries combines manual and ai data with source tags', () => {
   const manualLogs = [
     {

@@ -160,6 +160,7 @@ export default function TrainerPage() {
   const [isEndingRound, setIsEndingRound] = useState(false);
   const [answerInput, setAnswerInput] = useState('');
   const [lastRound, setLastRound] = useState(null);
+  const [settingsSaveError, setSettingsSaveError] = useState('');
   const [roundSizeDraft, setRoundSizeDraft] = useState(() => String(settings.roundSize));
   const [trainerInputMode, setTrainerInputMode] = useState(TRAINER_INPUT_MODES.MANUAL);
   const [customExpression, setCustomExpression] = useState('');
@@ -187,7 +188,6 @@ export default function TrainerPage() {
   const calculatorAbortRef = useRef(null);
   const aiSolveLockRef = useRef(false);
   const aiAutoCycleEnabledRef = useRef(aiAutoCycleEnabled);
-  const aiCycleStopRequestedRef = useRef(aiCycleStopRequested);
   const aiCycleBlueprintsRef = useRef(aiCycleBlueprints);
   const userId = user?.id ?? null;
   const currentUserIdRef = useRef(userId);
@@ -249,10 +249,6 @@ export default function TrainerPage() {
   }, [aiAutoCycleEnabled]);
 
   useEffect(() => {
-    aiCycleStopRequestedRef.current = aiCycleStopRequested;
-  }, [aiCycleStopRequested]);
-
-  useEffect(() => {
     aiCycleBlueprintsRef.current = aiCycleBlueprints;
   }, [aiCycleBlueprints]);
 
@@ -293,6 +289,7 @@ export default function TrainerPage() {
     setActiveRound(null);
     setAnswerInput('');
     setLastRound(null);
+    setSettingsSaveError('');
     calculatorAbortRef.current?.abort();
     setCustomExpression('');
     setCustomSolverState(DEFAULT_SOLVER_STATE);
@@ -419,10 +416,11 @@ export default function TrainerPage() {
       if (!userId || !clientRef.current) {
         try {
           await guestCheckpointRef.current;
-          if (guestSaveErrorRef.current) throw guestSaveErrorRef.current;
+          const checkpointError = guestSaveErrorRef.current;
           if (finishingSessionId) {
-            await finishGuestSession(finishingSessionId, wasTerminated ? 'ended' : 'completed');
+            await finishGuestSession(finishingSessionId, wasTerminated || checkpointError ? 'ended' : 'completed');
           }
+          if (checkpointError) throw checkpointError;
           if (isMountedRef.current) {
             setLastRound((current) => current?.sessionId === finishingSessionId ? { ...current, saveState: 'device-saved' } : current);
           }
@@ -566,6 +564,13 @@ export default function TrainerPage() {
     closeEndDialog(!result.error);
   }, [closeEndDialog, isEndingRound, terminateActiveRound]);
 
+  const saveTrainerSettings = useCallback(async (trainerSettings) => {
+    const result = await upsertPreferences({ trainerSettings });
+    if (isMountedRef.current && currentUserIdRef.current === userId) {
+      setSettingsSaveError(result?.error?.message || '');
+    }
+  }, [upsertPreferences, userId]);
+
   const commitRoundSizeDraft = useCallback(() => {
     const {
       nextSettings,
@@ -576,11 +581,11 @@ export default function TrainerPage() {
     setRoundSizeDraft(nextRoundSizeDraft);
 
     if (didChange) {
-      void upsertPreferences({ trainerSettings: nextSettings });
+      void saveTrainerSettings(nextSettings);
     }
 
     return nextSettings;
-  }, [roundSizeDraft, settings, upsertPreferences]);
+  }, [roundSizeDraft, settings, saveTrainerSettings]);
 
   const showRoundGenerationError = useCallback(
     (
@@ -656,7 +661,7 @@ export default function TrainerPage() {
         }
 
         if (persistSettings) {
-          void upsertPreferences({ trainerSettings: sanitizedSettings });
+          void saveTrainerSettings(sanitizedSettings);
         }
 
         setRoundSizeDraft(String(sanitizedSettings.roundSize));
@@ -693,7 +698,7 @@ export default function TrainerPage() {
       prepareRound,
       showRoundGenerationError,
       terminateActiveRound,
-      upsertPreferences,
+      saveTrainerSettings,
       userId
     ]
   );
@@ -1008,11 +1013,13 @@ export default function TrainerPage() {
     let isCancelled = false;
     let timeoutId = null;
 
-    function advanceAutoCycle(round) {
+    function advanceAutoCycle(round, canContinue) {
+      if (!round.aiAutoCycleRound || activeRoundRef.current) return;
+      if (!isMountedRef.current || currentUserIdRef.current !== userId) return;
+
       if (
-        round.aiAutoCycleRound &&
+        canContinue &&
         aiAutoCycleEnabledRef.current &&
-        !aiCycleStopRequestedRef.current &&
         aiCycleBlueprintsRef.current.length
       ) {
         const nextIndex =
@@ -1028,10 +1035,7 @@ export default function TrainerPage() {
             aiCycleBlueprintsRef.current[nextIndex]
           )
         });
-      } else if (round.aiAutoCycleRound) {
-        setAiTransitionState(null);
-        setAiCycleStopRequested(false);
-      }
+      } else handleStopAiCycle();
     }
 
     const solveCurrentBatch = async () => {
@@ -1070,7 +1074,7 @@ export default function TrainerPage() {
         }
 
         if (batchResult.isComplete) {
-          await finalizeRound(batchResult.attempts, roundSnapshot.settings, {
+          const result = await finalizeRound(batchResult.attempts, roundSnapshot.settings, {
             wasTerminated: Boolean(batchResult.generationError),
             generationError: batchResult.generationError,
             sourceMode: TRAINER_INPUT_MODES.AI,
@@ -1078,7 +1082,7 @@ export default function TrainerPage() {
             blueprintLabel: formatAiCycleBlueprintLabel(roundSnapshot.settings)
           });
 
-          if (!batchResult.generationError) advanceAutoCycle(roundSnapshot);
+          advanceAutoCycle(roundSnapshot, result.saved && !batchResult.generationError);
 
           return;
         }
@@ -1126,7 +1130,7 @@ export default function TrainerPage() {
       }
       aiSolveLockRef.current = false;
     };
-  }, [activeRound, aiModeBuffer, finalizeRound, userId]);
+  }, [activeRound, aiModeBuffer, finalizeRound, handleStopAiCycle, userId]);
 
   useEffect(() => {
     if (
@@ -1221,7 +1225,7 @@ export default function TrainerPage() {
       );
     }
 
-    void upsertPreferences({ trainerSettings: sanitizeSettings(nextSettings) });
+    void saveTrainerSettings(sanitizeSettings(nextSettings));
   };
 
   const handleModeChange = (nextMode) => {
@@ -1345,6 +1349,7 @@ export default function TrainerPage() {
       <button
         type='button'
         role='switch'
+        aria-label='Auto Cycle'
         aria-checked={aiAutoCycleEnabled}
         className={`toggle-switch${aiAutoCycleEnabled ? ' is-active' : ''}`}
         onClick={() => {
@@ -1498,6 +1503,9 @@ export default function TrainerPage() {
         {shouldShowHeroPanel && (
           <PageIntro title='Trainer' description='Choose a round and start practicing.' />
         )}
+        <p className={settingsSaveError ? 'feedback warning settings-save-feedback' : 'visually-hidden'} role='status'>
+          {settingsSaveError}
+        </p>
         {!shouldShowHeroPanel && <h1 className='visually-hidden'>Trainer round</h1>}
 
         {shouldShowAdminControl && (
@@ -1511,11 +1519,10 @@ export default function TrainerPage() {
                   </IconLabel>
                 </h2>
               </div>
-              <div className='mode-toggle' role='tablist' aria-label='Trainer mode'>
+              <div className='mode-toggle' role='group' aria-label='Trainer mode'>
                 <button
                   type='button'
-                  role='tab'
-                  aria-selected={trainerInputMode === TRAINER_INPUT_MODES.MANUAL}
+                  aria-pressed={trainerInputMode === TRAINER_INPUT_MODES.MANUAL}
                   className={`mode-toggle-button${trainerInputMode === TRAINER_INPUT_MODES.MANUAL ? ' is-active' : ''}`}
                   onClick={() => handleModeChange(TRAINER_INPUT_MODES.MANUAL)}
                   disabled={Boolean(activeRound)}
@@ -1524,8 +1531,7 @@ export default function TrainerPage() {
                 </button>
                 <button
                   type='button'
-                  role='tab'
-                  aria-selected={trainerInputMode === TRAINER_INPUT_MODES.AI}
+                  aria-pressed={trainerInputMode === TRAINER_INPUT_MODES.AI}
                   className={`mode-toggle-button${trainerInputMode === TRAINER_INPUT_MODES.AI ? ' is-active' : ''}`}
                   onClick={() => handleModeChange(TRAINER_INPUT_MODES.AI)}
                   disabled={Boolean(activeRound)}

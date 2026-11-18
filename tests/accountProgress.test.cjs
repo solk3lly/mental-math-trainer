@@ -23,6 +23,43 @@ test('a pending-queue failure leaves readable cloud history available with a syn
   assert.equal(snapshot.syncError.message, 'Queue unavailable');
 });
 
+test('confirmed history is available while a pending upload waits and refreshes after it lands', async t => {
+  const userId = 'waiting-upload';
+  let releaseUpload;
+  let reads = 0;
+  const displayed = [];
+  const upload = new Promise(resolve => { releaseUpload = resolve; });
+  const progress = await loadProgress(t, {
+    getPendingAccountProgressRows: async () => [{ user_id: userId }],
+    acknowledgeAccountProgressRows: async () => {}
+  });
+  const client = {
+    auth: { getUser: async () => ({ data: { user: { id: userId } }, error: null }) },
+    from: () => ({ upsert: () => upload }),
+    rpc: async () => ({ data: { overview: { totalAttempts: 9 + reads++ } }, error: null })
+  };
+  const pending = progress.loadProgressSnapshot(client, userId, () => true, {
+    onDashboard: dashboard => displayed.push(dashboard.overview.totalAttempts)
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  releaseUpload({ error: null });
+  assert.deepEqual(displayed, [9]);
+  assert.equal((await pending).dashboard.overview.totalAttempts, 10);
+});
+
+test('an import skipped by a reset reports a retryable failure', async t => {
+  const { resetAccountProgress } = await import('../utils/progressWriteCoordinator.js');
+  const userId = 'import-during-reset';
+  let releaseReset;
+  const reset = resetAccountProgress(userId, () => new Promise(resolve => { releaseReset = resolve; }));
+  const progress = await loadProgress(t, {});
+  const imported = progress.importGuestProgress({ client: {}, userId,
+    history: { sessions: [{ id: 'guest' }] }, isCurrent: () => true });
+  releaseReset();
+  await reset;
+  await assert.rejects(imported, /reset.*retry/i);
+});
+
 test('replay retires stale reset rows and saves the current generation from the same batch', async t => {
   const pending = [{ user_id: 'replay-generation', reset_generation: '0', question_index: 1 },
     { user_id: 'replay-generation', reset_generation: '1', question_index: 2 }];
@@ -53,6 +90,29 @@ test('an account change stops import before claiming or uploading a guest sessio
   };
   await assert.rejects(progress.importGuestProgress({ client, userId: 'import-original',
     history: { sessions: [{ id: 'guest' }] }, isCurrent: () => false }), /account changed/);
+});
+
+test('import reads only offered sessions and preserves Mixed mode for historical guest answers', async t => {
+  const userId = 'import-mixed-owner';
+  const published = [];
+  const progress = await loadProgress(t, {
+    getGuestHistory: async () => assert.fail('Import should not load the entire history'),
+    getGuestSessionForImport: async id => {
+      assert.equal(id, 'mixed-round');
+      return { kind: 'mixed', attempts: [{ row: { session_id: id, operation: 'ADDITION' } }] };
+    },
+    claimGuestSessionImport: async () => '0',
+    markGuestSessionImported: async () => {}
+  });
+  const client = {
+    rpc: async () => ({ data: '0', error: null }),
+    auth: { getUser: async () => ({ data: { user: { id: userId } }, error: null }) },
+    from: () => ({ upsert: async rows => { published.push(...rows); return { error: null }; } })
+  };
+  await progress.importGuestProgress({ client, userId,
+    history: { sessions: [{ id: 'mixed-round' }] }, isCurrent: () => true });
+  assert.equal(published.length, 1);
+  assert.equal(published[0].trainer_kind, 'mixed');
 });
 
 test('replay acknowledges valid answers around a permanently rejected answer', async t => {
@@ -96,4 +156,30 @@ test('a temporary database failure preserves queued answers without isolating ro
     from: () => ({ upsert: async () => ({ error }) })
   };
   await assert.rejects(progress.replayAccountProgress(client, userId, () => true), failure => failure === error);
+});
+
+test('failed AI progress survives buffer disposal and replays into the AI log', async t => {
+  require('fake-indexeddb/auto');
+  const { createAiModeLogBuffer } = await import('../utils/aiModeLogs.js');
+  const { replayAccountProgress } = await import('../utils/accountProgress.js');
+  const { getPendingAccountProgressRows } = await import('../utils/progressStorage.js');
+  const userId = 'durable-ai-round';
+  const row = { user_id: userId, source_kind: 'trainer', session_id: 'ai-round', question_index: 1 };
+  const buffer = createAiModeLogBuffer({
+    getClient: () => ({ from: () => ({ upsert: async () => ({ error: new Error('Offline') }) }) }),
+    setTimeoutImpl: () => 1, clearTimeoutImpl() {}
+  });
+  t.after(() => buffer.dispose());
+  buffer.enqueue(row);
+  await assert.rejects(buffer.flush(), /Offline/);
+  buffer.dispose();
+
+  const writes = [];
+  const client = {
+    auth: { getUser: async () => ({ data: { user: { id: userId } }, error: null }) },
+    from: table => ({ upsert: async rows => { writes.push({ table, rows }); return { error: null }; } })
+  };
+  await replayAccountProgress(client, userId, () => true);
+  assert.deepEqual(writes, [{ table: 'ai_mode_logs', rows: [row] }]);
+  assert.deepEqual(await getPendingAccountProgressRows(userId), []);
 });

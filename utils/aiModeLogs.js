@@ -1,4 +1,5 @@
 import { getProgressWriteGeneration, isProgressRowCurrent, registerProgressBuffer, writeBufferedProgress } from './progressWriteCoordinator.js';
+import { acknowledgeAccountProgressRows, queueAccountProgressRow } from './progressStorage.js';
 
 export const AI_MODE_LOG_TABLE = 'ai_mode_logs';
 export const AI_MODE_LOG_INSERT_BATCH_SIZE = 500;
@@ -184,6 +185,7 @@ export function createAiModeLogBuffer({
   let inFlightRows = [];
   let flushTimer = null;
   let flushPromise = null;
+  let durableWrites = Promise.resolve();
   const generations = new WeakMap();
   const isCurrent = row => isProgressRowCurrent(row, generations.get(row));
 
@@ -218,10 +220,7 @@ export function createAiModeLogBuffer({
 
     if (flushPromise) {
       if (keepalive) {
-        const rowsToKeepalive = [...inFlightRows, ...pendingRows];
-        if (rowsToKeepalive.length) {
-          fireKeepalive(rowsToKeepalive);
-        }
+        fireKeepalive([...inFlightRows, ...pendingRows]);
       }
 
       return flushPromise;
@@ -240,6 +239,7 @@ export function createAiModeLogBuffer({
 
     flushPromise = (async () => {
       while (pendingRows.length) {
+        await durableWrites;
         const snapshot = pendingRows;
         pendingRows = [];
         inFlightRows = snapshot;
@@ -251,6 +251,7 @@ export function createAiModeLogBuffer({
         try {
           await writeBufferedProgress(snapshot, isCurrent, async current => {
             await persistAiModeLogBatches(client, current, batchSize);
+            await acknowledgeAccountProgressRows(current).catch(() => {});
             flushedCount += current.length;
           });
         } catch (error) {
@@ -280,6 +281,7 @@ export function createAiModeLogBuffer({
   const enqueue = (row) => {
     generations.set(row, getProgressWriteGeneration(row.user_id));
     pendingRows = [...pendingRows, row];
+    durableWrites = durableWrites.then(() => queueAccountProgressRow(row)).catch(() => {});
 
     if (pendingRows.length >= flushSize) {
       void flush().catch(() => {});
@@ -297,6 +299,7 @@ export function createAiModeLogBuffer({
   const unregister = registerProgressBuffer(userId => {
     pendingRows = pendingRows.filter(row => row.user_id !== userId || isCurrent(row));
     if (!pendingRows.length) cancelScheduledFlush();
+    return durableWrites;
   });
 
   return {

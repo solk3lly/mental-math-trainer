@@ -4,7 +4,7 @@ const React = require('react');
 const { create, act } = require('react-test-renderer');
 const { loadPage } = require('./helpers/renderPage.cjs');
 
-async function fixture(t, mode, initialUser = null) {
+async function fixture(t, mode, initialUser = null, isAdmin = false) {
   const names = ['mathEngine', 'trainerRound', 'trainerPresentation', 'mixedDifficulty', 'mixedTrainerRound',
     'mixedTrainerPresentation', 'aiTrainer', 'aiCycle', 'aiModeLogs', 'progressLogs', 'progressWriteCoordinator', 'hotkeys', 'roundHistory', 'aiCalculator'];
   const dependencies = Object.fromEntries(await Promise.all(names.map(async name =>
@@ -17,6 +17,8 @@ async function fixture(t, mode, initialUser = null) {
   const calls = { guest: [], account: [], finished: [], stored: [] };
   let generation = '0';
   let flushFailure;
+  let guestFailure;
+  let settingsFailure;
   let flushWrites = true;
   const client = {
     rpc: async () => ({ data: generation, error: null }),
@@ -35,7 +37,7 @@ async function fixture(t, mode, initialUser = null) {
       return query;
     }
   };
-  let auth = { client, session: { access_token: 'test' }, user: initialUser, isAdmin: false };
+  let auth = { client, session: { access_token: 'test' }, user: initialUser, isAdmin };
   const buffer = {
     enqueue: row => calls.account.push(row),
     async flush() {
@@ -52,10 +54,11 @@ async function fixture(t, mode, initialUser = null) {
   const router = { pathname: mode === 'mixed' ? '/mixed' : '/', events: { on() {}, off() {} } };
   dependencies['next/router'] = { useRouter: () => router };
   dependencies['utils/supabaseAuthContext.js'] = { useSupabaseAuth: () => auth };
-  dependencies['utils/accountPreferencesContext.js'] = { useAccountPreferences: () => ({ trainerSettings: settings, isLoadingPreferences: false, upsertPreferences: async () => {} }) };
+  const saveSettings = async () => ({ error: settingsFailure });
+  dependencies['utils/accountPreferencesContext.js'] = { useAccountPreferences: () => ({ trainerSettings: settings, isLoadingPreferences: false, upsertPreferences: saveSettings }) };
   dependencies['utils/mixedTrainerContext.js'] = {
     MixedTrainerProvider: props => props.children,
-    useMixedTrainer: () => ({ mixedSettings, isLoadingMixedSettings: false, upsertMixedSettings: async () => {} })
+    useMixedTrainer: () => ({ mixedSettings, isLoadingMixedSettings: false, upsertMixedSettings: saveSettings })
   };
   const activeSession = { registerActiveSessionTerminator: () => () => {}, registerActiveSessionExitHandler: () => () => {}, requestActiveSessionExit: async () => true };
   dependencies['utils/activeSessionContext.js'] = { useActiveSession: () => activeSession };
@@ -68,11 +71,17 @@ async function fixture(t, mode, initialUser = null) {
   dependencies['utils/supabaseClient.js'] = { getSupabaseRestConfig: () => null };
   dependencies['utils/progressStorage.js'] = {
     startGuestSession: async () => {}, touchGuestSession: async () => {},
-    recordGuestAttempt: async (_id, _index, row) => calls.guest.push(row),
+    async recordGuestAttempt(_id, _index, row) {
+      if (guestFailure) throw guestFailure;
+      calls.guest.push(row);
+    },
     finishGuestSession: async (id, state) => calls.finished.push({ id, state })
   };
   const previousWindow = global.window;
-  global.window = { addEventListener() {}, removeEventListener() {}, setInterval: () => 1, clearInterval() {} };
+  global.window = {
+    addEventListener() {}, removeEventListener() {}, setInterval: () => 1, clearInterval() {},
+    setTimeout: (...args) => setTimeout(...args), clearTimeout: (...args) => clearTimeout(...args)
+  };
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const { Page, components } = loadPage(mode === 'mixed' ? 'pages/mixed.js' : 'pages/index.js', dependencies);
   let renderer;
@@ -104,6 +113,22 @@ async function fixture(t, mode, initialUser = null) {
     ? renderer.root.findAllByType(components.get('components/mixed/Keypad.js')).length > 0
     : renderer.root.findAllByProps({ id: 'answerInput' }).length > 0;
   return { start, submit, changeUser, advance, isActive, calls,
+    async startAutoCycle() {
+      const aiMode = renderer.root.findAllByType('button').find(button => button.children.includes('AI MODE'));
+      await act(async () => aiMode.props.onClick());
+      const autoCycle = renderer.root.findAllByProps({ role: 'switch' })[0];
+      await act(async () => autoCycle.props.onClick());
+      await act(async () => t.mock.timers.tick(0));
+    },
+    hasRetryButton: () => renderer.root.findAllByType('button').some(node => node.children.includes('Retry save')),
+    setGuestFailure(error) { guestFailure = error; },
+    async changeSetting(error) {
+      settingsFailure = error;
+      const select = renderer.root.findAllByType('select')[0];
+      await act(async () => select.props.onChange({ target: { value: 'ADDITION' } }));
+    },
+    showsSettingsWarning: () => renderer.root.findAllByType('p').some(node =>
+      node.props.role === 'status' && node.children.includes('Could not save settings on this device.')),
     resetOnServer() { generation = '1'; calls.stored = []; },
     setFlushFailure(error) { flushFailure = error; },
     stopWriting() { flushWrites = false; },
@@ -112,6 +137,30 @@ async function fixture(t, mode, initialUser = null) {
 }
 
 for (const mode of ['standard', 'mixed']) {
+  test(`${mode} closes guest history after a failed answer checkpoint`, async t => {
+    const app = await fixture(t, mode);
+    await app.start();
+    await app.submit();
+    if (mode === 'mixed') await app.advance();
+    app.setGuestFailure(new Error('Device history unavailable'));
+    for (let index = 0; index < 2; index++) {
+      await app.submit();
+      if (mode === 'mixed') await app.advance();
+    }
+    assert.match(app.summary().saveStatus, /Device history unavailable/);
+    assert.equal(app.calls.guest.length, 1);
+    assert.equal(app.calls.finished.length, 1);
+    assert.equal(app.calls.finished[0].state, 'ended');
+  });
+
+  test(`${mode} displays a settings write failure and clears it after a successful write`, async t => {
+    const app = await fixture(t, mode);
+    await app.changeSetting(new Error('Could not save settings on this device.'));
+    assert.equal(app.showsSettingsWarning(), true);
+    await app.changeSetting(null);
+    assert.equal(app.showsSettingsWarning(), false);
+  });
+
   test(`${mode} sign-in ends the guest round without uploading or splitting its answers`, async t => {
     const app = await fixture(t, mode);
     await app.start(); await app.submit();
@@ -156,6 +205,14 @@ test('a background upload can acknowledge a Standard round even when its final f
   app.calls.stored = [...app.calls.account];
   await act(async () => app.summary().retryAction.onClick());
   assert.match(app.summary().saveStatus, /saved to your progress/);
+});
+
+test('Auto Cycle keeps the retry action available after a failed save', async t => {
+  const app = await fixture(t, 'standard', { id: 'auto-cycle-owner' }, true);
+  app.setFlushFailure(new Error('Temporary write failure'));
+  await app.startAutoCycle();
+  assert.equal(app.calls.account.length, 3);
+  assert.equal(app.hasRetryButton(), true);
 });
 
 test('account changes cancel Mixed feedback instead of restoring the previous account round', async t => {

@@ -11,6 +11,7 @@ test('fresh web tables expose only the required operations and account rows', as
   const userId = '00000000-0000-0000-0000-000000000001';
   const otherId = '00000000-0000-0000-0000-000000000002';
   const sessionId = '00000000-0000-0000-0000-000000000003';
+  const mixedSessionId = '00000000-0000-0000-0000-000000000004';
   await db.exec(`
     create role anon;
     create role authenticated;
@@ -45,8 +46,15 @@ test('fresh web tables expose only the required operations and account rows', as
     digits_right, left_operand, right_operand, correct_answer, submitted_answer, is_correct, response_ms)
     values ($1, $2, 1, 'ADDITION', 1, 1, '2', '3', '5', '5', true, 100)
     on conflict (user_id, session_id, question_index) do nothing`, [userId, sessionId]);
+  await db.query(`insert into public.progress_logs (user_id, session_id, question_index, trainer_kind, operation,
+    digits_left, digits_right, left_operand, right_operand, correct_answer, submitted_answer, is_correct, response_ms)
+    values ($1, $2, 1, 'mixed', 'ADDITION', 1, 1, '2', '3', '5', '5', true, 100)`, [userId, mixedSessionId]);
   const result = await db.query('select public.get_progress_dashboard_data() as dashboard');
-  assert.equal(result.rows[0].dashboard.overview.totalAttempts, 1);
+  const dashboard = result.rows[0].dashboard;
+  assert.equal(dashboard.overview.totalAttempts, 2);
+  const modeBySession = new Map(dashboard.recentSessions.map(session => [session.sessionId, session.modeLabel]));
+  assert.equal(modeBySession.get(sessionId), 'Addition');
+  assert.equal(modeBySession.get(mixedSessionId), 'Mixed');
   assert.deepEqual((await db.query('select user_id from public.ai_mode_logs')).rows, []);
   await assert.rejects(db.query('select * from public.account_progress_resets'), { code: '42501' });
   await assert.rejects(db.query('update public.progress_logs set response_ms = 100'), { code: '42501' });

@@ -14,8 +14,8 @@ colors:
 
 # Studio design system
 
-Studio is the single interface. All 59 color themes and Light, Dark, and Adaptive
-modes remain available. Appearance changes do not change training or account data.
+Studio is the single web interface. Choose a color theme and a Light, Dark, or
+Adaptive display mode. Appearance changes do not change training or account data.
 
 The [Stageshow article](https://benji.org/stageshow) informs the composition:
 make the subject obvious, group related information, use restrained surfaces,

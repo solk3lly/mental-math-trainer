@@ -600,7 +600,7 @@ test('shouldAutoSubmitAnswer only triggers on exact correct integer input', () =
   assert.equal(shouldAutoSubmitAnswer('-', 42n), null);
 });
 
-test('buildMixedProgressLogRows preserves per-attempt operation metadata', () => {
+test('buildMixedProgressLogRows preserves the Mixed mode and per-attempt operation metadata', () => {
   const rows = buildMixedProgressLogRows(
     [
       {
@@ -635,6 +635,7 @@ test('buildMixedProgressLogRows preserves per-attempt operation metadata', () =>
       user_id: 'user-123',
       session_id: 'session-123',
       question_index: 1,
+      trainer_kind: 'mixed',
       operation: 'EXPONENTIATION',
       digits_left: 2,
       digits_right: 1,
@@ -649,6 +650,7 @@ test('buildMixedProgressLogRows preserves per-attempt operation metadata', () =>
       user_id: 'user-123',
       session_id: 'session-123',
       question_index: 2,
+      trainer_kind: 'mixed',
       operation: 'MULTIPLICATION',
       digits_left: 2,
       digits_right: 1,

@@ -48,19 +48,26 @@ export default function useProgressDashboard(auth) {
   const loadLogs = useCallback(async function loadProgressLogs(options) {
     if (currentUserIdRef.current !== userId) return;
     const sequence = ++loadSequenceRef.current;
+    const isCurrentLoad = () => sequence === loadSequenceRef.current && currentUserIdRef.current === userId;
     setIsLoading(true);
     setErrorMessage('');
     setSyncError('');
 
     try {
-      const snapshot = await loadProgressSnapshot(client, userId, () => currentUserIdRef.current === userId, options);
-      if (sequence !== loadSequenceRef.current || !snapshot) return;
+      const snapshot = await loadProgressSnapshot(client, userId, isCurrentLoad, {
+        ...options,
+        onDashboard(dashboard) {
+          setDashboardData(dashboard);
+          setIsLoading(false);
+        }
+      });
+      if (!isCurrentLoad() || !snapshot) return;
       setDashboardData(snapshot.dashboard);
       setSyncError(snapshot.syncError ? failureMessage(snapshot.syncError, 'Some pending answers could not sync. Refresh to retry.') : '');
       setRejectedCount(snapshot.rejectedCount ?? 0);
       setIsLoading(false);
     } catch (error) {
-      if (sequence !== loadSequenceRef.current) return;
+      if (!isCurrentLoad()) return;
       setDashboardData(createEmptyProgressDashboard());
       setErrorMessage(failureMessage(error, 'Could not load progress data.'));
       setIsLoading(false);
@@ -94,7 +101,8 @@ export default function useProgressDashboard(auth) {
 
   const handleImport = async () => {
     if (!client || !userId) return;
-    if (!importOffer || isImporting) return;
+    if (isImporting || isResetting) return;
+    if (!importOffer) return;
     const owner = userId;
     setIsImporting(true);
     setErrorMessage('');
@@ -103,7 +111,7 @@ export default function useProgressDashboard(auth) {
         isCurrent: () => currentUserIdRef.current === owner });
       if (currentUserIdRef.current !== owner) return;
       setImportOffer(null);
-      await loadLogs();
+      void loadLogs();
     }, error => applyIfCurrent(() => setSyncError(failureMessage(error, 'Import failed. Device history is still available to retry.'))),
     () => applyIfCurrent(() => setIsImporting(false)));
   };

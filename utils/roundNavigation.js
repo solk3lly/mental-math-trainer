@@ -1,19 +1,23 @@
 const POSITION_KEY = 'mentalMathHistoryPosition';
 
-export function installRoundNavigation({ history, router, isActive, requestExit }) {
+export function installRoundNavigation({ history, navigation, router, isActive, requestExit }) {
   const push = history.pushState;
   const replace = history.replaceState;
-  let position = history.state?.[POSITION_KEY] ?? 0;
+  const entryIndex = () => {
+    const index = navigation?.currentEntry?.index;
+    return index >= 0 ? index : undefined;
+  };
+  let position = entryIndex() ?? history.state?.[POSITION_KEY] ?? 0;
   let pending = null;
   let disposed = false;
 
   history.pushState = function (state, title, url) {
     const nextPosition = position + 1;
     push.call(history, { ...state, [POSITION_KEY]: nextPosition }, title, url);
-    position = nextPosition;
+    position = entryIndex() ?? nextPosition;
   };
   history.replaceState = function (state, title, url) {
-    replace.call(history, { ...state, [POSITION_KEY]: position }, title, url);
+    replace.call(history, { ...state, [POSITION_KEY]: entryIndex() ?? position }, title, url);
   };
   history.replaceState(history.state, '', undefined);
 
@@ -45,7 +49,7 @@ export function installRoundNavigation({ history, router, isActive, requestExit 
   }
 
   function handleTraversal(state) {
-    const target = state?.[POSITION_KEY] ?? history.state?.[POSITION_KEY];
+    const target = entryIndex() ?? state?.[POSITION_KEY] ?? history.state?.[POSITION_KEY];
     if (!Number.isInteger(target)) return true;
     if (pending) return restoreOrConfirm(target);
     if (target === position || !isActive()) {
@@ -57,11 +61,16 @@ export function installRoundNavigation({ history, router, isActive, requestExit 
     return false;
   }
   router.beforePopState(handleTraversal);
+  const updatePositionOnPush = (event) => {
+    if (event.navigationType === 'push') position = entryIndex() ?? position;
+  };
+  navigation?.addEventListener('currententrychange', updatePositionOnPush);
 
   return () => {
     disposed = true;
     history.pushState = push;
     history.replaceState = replace;
+    navigation?.removeEventListener('currententrychange', updatePositionOnPush);
     router.beforePopState(() => true);
   };
 }

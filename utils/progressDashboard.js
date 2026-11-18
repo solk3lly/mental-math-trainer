@@ -340,7 +340,7 @@ export function buildGuestProgressDashboard(history) {
   const recentSessions = buildRecentSessions(entries, DEFAULT_RECENT_SESSION_LIMIT)
     .map((session) => ({
       ...session,
-      modeLabel: getSessionModeLabel(session),
+      modeLabel: sessionsById.get(session.sessionId)?.kind === 'mixed' ? 'Mixed' : getSessionModeLabel(session),
       digitsLabel: getSessionDigitsLabel(session) || '—',
       averageResponseMs: session.attempts
         ? Math.round(session.totalResponseMs / session.attempts) : 0,

@@ -56,6 +56,6 @@ try {
       if (examples.length < 3) examples.push({ left: problem.leftOperand, right: problem.rightOperand, expected: problem.correctAnswer, aiAnswer: solved.submittedAnswer });
     }
   }
-  assert(aiMismatches > 0);
   console.log(JSON.stringify({ aiDecimalMultiplicationProblems: 100, aiMismatches, examples }));
+  assert.equal(aiMismatches, 0);
 } finally { Math.random = originalRandom; }

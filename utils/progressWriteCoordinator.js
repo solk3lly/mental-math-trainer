@@ -6,8 +6,7 @@ const serverGenerations = new Map();
 export async function getAccountProgressGeneration(client, userId) {
   const { data, error } = await client.rpc('get_account_progress_generation', { expected_user_id: userId });
   if (error) throw error;
-  rememberServerGeneration(userId, data);
-  return String(data);
+  return rememberServerGeneration(userId, data);
 }
 
 // Web Locks order writes and resets across tabs; storage invalidates queued rows.
@@ -75,7 +74,7 @@ export function resetAccountProgress(userId, work, afterReset) {
       const result = await work();
       state.generation += 1;
       const resetId = globalThis.crypto?.randomUUID?.() || `${Date.now()}:${Math.random()}`;
-      writeStorageJson(`mathtrainer:progress-reset:${userId}`, resetId);
+      writeStorageJson(`mathtrainer:progress-reset:${userId}`, { id: resetId, generation: result });
       if (result !== undefined) rememberServerGeneration(userId, result);
       await Promise.allSettled([...buffers].map(discard => discard(userId)));
       await afterReset?.(result);
@@ -121,13 +120,19 @@ async function countSavedAnswers(client, table, { ownerId, resetGeneration, sess
 }
 
 function rememberServerGeneration(userId, generation) {
-  serverGenerations.set(userId, { generation: String(generation), local: getProgressWriteGeneration(userId) });
+  const latest = serverGenerations.get(userId)?.generation;
+  const observed = latest !== undefined && BigInt(latest) > BigInt(generation) ? latest : String(generation);
+  serverGenerations.set(userId, { generation: observed, local: getProgressWriteGeneration(userId) });
+  return observed;
 }
 
 export function isProgressRowCurrent(row, queuedGeneration) {
   const local = getProgressWriteGeneration(row.user_id);
   const server = serverGenerations.get(row.user_id);
   if (row.reset_generation === undefined || !server) return queuedGeneration === local;
-  if (server.local !== local) return false;
-  return String(row.reset_generation) === server.generation;
+  if (server.local === local) return String(row.reset_generation) === server.generation;
+  const reset = readStorageJson(`mathtrainer:progress-reset:${row.user_id}`);
+  if (reset?.generation === undefined) return false;
+  const latest = BigInt(reset.generation) > BigInt(server.generation) ? reset.generation : server.generation;
+  return String(row.reset_generation) === String(latest);
 }

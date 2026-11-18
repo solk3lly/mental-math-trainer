@@ -124,6 +124,7 @@ function MixedTrainerContent() {
     MIXED_SUBMISSION_FEEDBACK_STATES.IDLE
   );
   const [lastRound, setLastRound] = useState(null);
+  const [settingsSaveError, setSettingsSaveError] = useState('');
   const [isDesktopMixedInput, setIsDesktopMixedInput] = useState(false);
   const handledQuestionIdRef = useRef(null);
   const answerInputRef = useRef(null);
@@ -237,6 +238,7 @@ function MixedTrainerContent() {
     setAnswerInput('');
     setSubmissionFeedbackState(MIXED_SUBMISSION_FEEDBACK_STATES.IDLE);
     setLastRound(null);
+    setSettingsSaveError('');
     handledQuestionIdRef.current = null;
   }, [progressBuffer, userId]);
 
@@ -313,10 +315,11 @@ function MixedTrainerContent() {
       if (!userId || !clientRef.current) {
         try {
           await guestCheckpointRef.current;
-          if (guestSaveErrorRef.current) throw guestSaveErrorRef.current;
+          const checkpointError = guestSaveErrorRef.current;
           if (finishingSessionId) {
-            await finishGuestSession(finishingSessionId, wasTerminated ? 'ended' : 'completed');
+            await finishGuestSession(finishingSessionId, wasTerminated || checkpointError ? 'ended' : 'completed');
           }
+          if (checkpointError) throw checkpointError;
           if (isMountedRef.current) {
             setLastRound((current) => current?.sessionId === finishingSessionId ? { ...current, saveState: 'device-saved' } : current);
           }
@@ -483,6 +486,13 @@ function MixedTrainerContent() {
     closeEndDialog(!result.error);
   }, [closeEndDialog, isEndingRound, terminateActiveRound]);
 
+  const saveMixedSettings = useCallback(async (patch) => {
+    const result = await upsertMixedSettings(patch);
+    if (isMountedRef.current && previousUserIdRef.current === userId) {
+      setSettingsSaveError(result?.error?.message || '');
+    }
+  }, [upsertMixedSettings, userId]);
+
   const beginRound = useCallback(async function beginMixedRound() {
     if (isLoadingMixedSettings || !canStart) {
       return;
@@ -507,7 +517,7 @@ function MixedTrainerContent() {
         });
       }
 
-      void upsertMixedSettings(sanitized);
+      void saveMixedSettings(sanitized);
       setLastRound(null);
       setAnswerInput('');
       setSubmissionFeedbackState(MIXED_SUBMISSION_FEEDBACK_STATES.IDLE);
@@ -516,7 +526,7 @@ function MixedTrainerContent() {
       setActiveRound(nextRound);
     }, error => setLastRound({ ...createRoundSummary([], settings, userId, false, null),
       saveState: 'error', saveError: error.message }));
-  }, [canStart, isLoadingMixedSettings, prepareRound, settings, upsertMixedSettings, userId]);
+  }, [canStart, isLoadingMixedSettings, prepareRound, settings, saveMixedSettings, userId]);
 
   const startRound = useCallback(
     (event) => {
@@ -843,7 +853,7 @@ function MixedTrainerContent() {
       normalizedValue = value === true || value === 'true';
     }
 
-    void upsertMixedSettings({ [key]: normalizedValue });
+    void saveMixedSettings({ [key]: normalizedValue });
   };
 
   const isMixedFinishState = Boolean(!activeRound && lastRound);
@@ -865,6 +875,9 @@ function MixedTrainerContent() {
           <PageIntro title='Mixed Trainer' description='Choose operations and start a round.' />
         )}
         {!shouldShowHeroPanel && <h1 className='visually-hidden'>Mixed round</h1>}
+        <p className={settingsSaveError ? 'feedback warning settings-save-feedback' : 'visually-hidden'} role='status'>
+          {settingsSaveError}
+        </p>
 
         {shouldShowMixedConfig && (
           <section className='mixed-config-layout appear-up'>
@@ -937,6 +950,7 @@ function MixedTrainerContent() {
                     <button
                       type='button'
                       role='switch'
+                      aria-label='Right-to-left'
                       aria-checked={settings.rtlInput}
                       className={`toggle-switch${settings.rtlInput ? ' is-active' : ''}`}
                       onClick={() => updateSetting('rtlInput', !settings.rtlInput)}
@@ -951,6 +965,7 @@ function MixedTrainerContent() {
                     <button
                       type='button'
                       role='switch'
+                      aria-label='Hide Timer'
                       aria-checked={settings.hideTimer}
                       className={`toggle-switch${settings.hideTimer ? ' is-active' : ''}`}
                       onClick={() => updateSetting('hideTimer', !settings.hideTimer)}

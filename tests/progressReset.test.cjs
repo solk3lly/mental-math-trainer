@@ -8,7 +8,8 @@ async function isolatedTab(name) {
   const path = require('node:path');
   const url = pathToFileURL(path.resolve('utils/progressWriteCoordinator.js')).href + `?tab=${name}`;
   const source = fs.readFileSync(path.resolve('utils/aiModeLogs.js'), 'utf8')
-    .replace("'./progressWriteCoordinator.js'", JSON.stringify(url));
+    .replace("'./progressWriteCoordinator.js'", JSON.stringify(url))
+    .replace("'./progressStorage.js'", JSON.stringify(pathToFileURL(path.resolve('utils/progressStorage.js')).href));
   return {
     coordinator: await import(url),
     ai: await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'))
@@ -198,4 +199,30 @@ test('reset clears durable retries and permits new progress after deletion', asy
   assert.deepEqual(remote.map(entry => entry.session_id), ['after-reset']);
   assert.deepEqual(await storage.getPendingAccountProgressRows('durable-reset'), []);
   buffer.dispose();
+});
+
+test('an older reset response preserves a newer observed generation and its pending answer', async () => {
+  require('fake-indexeddb/auto');
+  const { resetProgressForAccount } = await import('../utils/accountProgress.js');
+  const { assertProgressRoundCurrent, getAccountProgressGeneration } = await import('../utils/progressWriteCoordinator.js');
+  const { getPendingAccountProgressRows, queueAccountProgressRow } = await import('../utils/progressStorage.js');
+  const userId = 'late-reset-response';
+  const started = deferred();
+  const response = deferred();
+  const client = { rpc: async name => {
+    if (name !== 'reset_account_progress') return { data: '2', error: null };
+    started.resolve();
+    return response.promise;
+  } };
+  const reset = resetProgressForAccount(client, userId, () => true);
+  await started.promise;
+  assert.equal(await getAccountProgressGeneration(client, userId), '2');
+  const base = { user_id: userId, session_id: 'round', question_index: 1 };
+  const latestAnswer = { ...base, question_index: 2, reset_generation: '2' };
+  await queueAccountProgressRow({ ...base, reset_generation: '0' });
+  await queueAccountProgressRow(latestAnswer);
+  response.resolve({ data: '1', error: null });
+  await reset;
+  assert.deepEqual(await getPendingAccountProgressRows(userId), [latestAnswer]);
+  assert.doesNotThrow(() => assertProgressRoundCurrent({ resetGeneration: '2' }, userId));
 });

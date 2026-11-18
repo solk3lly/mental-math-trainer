@@ -325,7 +325,7 @@ export default function SiteLayout({ children }) {
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
     return installRoundNavigation({
-      history: window.history, router,
+      history: window.history, navigation: window.navigation, router,
       isActive: () => navigationRef.current.hasActiveSession,
       requestExit: () => {
         closeUtilityDrawer();
@@ -476,7 +476,10 @@ export default function SiteLayout({ children }) {
           key='msapplication-TileColor'
         />
       </Head>
-      <a className='skip-link' href='#main-content'>
+      <a className='skip-link' href='#main-content' onClick={(event) => {
+        event.preventDefault();
+        document.getElementById('main-content').focus();
+      }}>
         Skip to content
       </a>
       <header className='site-header'>
@@ -634,7 +637,7 @@ export default function SiteLayout({ children }) {
         </>
       )}
 
-      <main id='main-content' className='site-main'>
+      <main id='main-content' className='site-main' tabIndex={-1}>
         {user && signOutFailure === user.id && (
           <div className='feedback warning'>
             <p role='alert'>Could not log out. This browser may still be signed in.</p>

@@ -12,6 +12,7 @@ import {
   floorDependencies,
   formatDependencies,
   fractionDependencies,
+  isFiniteDependencies,
   logDependencies,
   modDependencies,
   multiplyDependencies,
@@ -41,6 +42,7 @@ const MATHJS_DEPENDENCIES = {
   floorDependencies,
   formatDependencies,
   fractionDependencies,
+  isFiniteDependencies,
   logDependencies,
   modDependencies,
   multiplyDependencies,
@@ -108,11 +110,10 @@ function normalizeExpressionText(expression) {
 
 function assertSupportedScalar(value, formatter) {
   const valueType = formatter.typeOf(value);
-  if (valueType === 'Fraction' || valueType === 'BigNumber' || valueType === 'number') {
-    return valueType;
+  if (!['Fraction', 'BigNumber', 'number'].includes(valueType)) {
+    throw new Error(`AI MODE does not support ${valueType} results.`);
   }
-
-  throw new Error(`AI MODE does not support ${valueType} results.`);
+  if (!formatter.isFinite(value)) throw new Error('The expression does not have a finite real result.');
 }
 
 function validateExpressionSize(rootNode) {

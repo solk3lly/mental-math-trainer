@@ -68,6 +68,10 @@ test('solveAiExpression returns high-precision decimals for irrational results',
   assert.match(result.exactText, /^1\.41421356/);
 });
 
+test('the calculator rejects non-finite real results', () => {
+  assert.throws(() => solveAiExpression('log(0)'), /finite real result/);
+});
+
 test('solveAiExpression allows approved calculator functions', () => {
   const result = solveAiExpression('round(log(100, 10) + abs(-4))');
 

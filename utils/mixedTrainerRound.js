@@ -448,6 +448,7 @@ export function buildMixedProgressLogRow(attempt, userId, sessionId, questionInd
     user_id: userId,
     session_id: sessionId,
     question_index: questionIndex,
+    trainer_kind: 'mixed',
     operation: attempt.operation,
     digits_left: attempt.digitsLeft,
     digits_right: attempt.digitsRight,
